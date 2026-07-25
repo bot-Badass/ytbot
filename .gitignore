@@ -1,0 +1,12 @@
+# секрети - НІКОЛИ в git
+.env
+local-api.env
+
+# кеш локального Bot API сервера
+tgapi-data/
+tgapi-temp/
+
+# збірка / сміття
+build.log
+__pycache__/
+*.pyc
