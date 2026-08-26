@@ -60,7 +60,7 @@ def check_text(where: str, text: str) -> None:
 
 
 def check_kb(where: str, kb) -> None:
-    if kb is None:
+    if kb is None or not hasattr(kb, "inline_keyboard"):
         return
     for row in kb.inline_keyboard:
         for btn in row:
@@ -170,6 +170,12 @@ async def main() -> None:
     await press("f:save:lunch")
     meals = db.meals_between(child["id"], 0, db.now() + 1)
     assert len(meals) == 1, f"прийомів {len(meals)}, очікував 1"
+    record = next((s for s in bot.sent if s.startswith("✅ <b>")), None)
+    assert record, "запис про прийом їжі не потрапив у чат"
+    await press("f:home")
+    assert record in bot.sent, "запис зник після навігації"
+    assert not any(s.startswith("✅ <b>") and "Головна" in s for s in bot.sent)
+    print("запис у чаті:", record.replace("<b>", "").replace("</b>", "").split(chr(10))[0])
     assert set(db.meal_codes(meals[0]["id"])) == {"garbuz", "grechka", "indychka", "oliia"}
     assert len(db.intro_map(child["id"])) == 4
     nudges = db.due_nudges(db.now() + 10 * 86400)

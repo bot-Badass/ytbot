@@ -8,7 +8,7 @@ from datetime import date, datetime, timedelta
 
 from telegram import InlineKeyboardButton as B
 from telegram import InlineKeyboardMarkup as M
-from telegram import Update
+from telegram import ReplyKeyboardRemove, Update
 from telegram.constants import ParseMode
 from telegram.error import TelegramError
 from telegram.ext import ApplicationHandlerStop, ContextTypes
@@ -278,6 +278,31 @@ def _tonight_ts() -> int:
     return int(target.timestamp())
 
 
+async def _record_and_continue(update: Update, context: ContextTypes.DEFAULT_TYPE,
+                               child, codes: list[str], kind: str, fresh: list[str]) -> None:
+    """Запис про їжу лишається в чаті назавжди, навігація йде окремим повідомленням.
+
+    Раніше і запис, і наступний екран жили в одному повідомленні, тому «Головна»
+    затирала те, що дитина щойно з'їла. Тепер редагування зупиняється на записі:
+    у нього немає кнопок, отже перезаписати його нічим.
+    """
+    record = ui.meal_record(child, codes, kind)
+    query = update.callback_query
+    posted = False
+    if query:
+        try:
+            await query.edit_message_text(record, parse_mode=ParseMode.HTML, reply_markup=None)
+            posted = True
+        except TelegramError as exc:
+            log.warning("не вдалось перетворити картку на запис: %s", exc)
+    if not posted:
+        await update.effective_chat.send_message(record, parse_mode=ParseMode.HTML)
+
+    text, kb = ui.after_save(child, db.intro_map(child["id"]), fresh)
+    await update.effective_chat.send_message(text, parse_mode=ParseMode.HTML, reply_markup=kb,
+                                             disable_web_page_preview=True)
+
+
 # ─────────────────────────── роутер кнопок ───────────────────────────
 
 
@@ -364,12 +389,12 @@ async def on_button(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         kind = parts[2]
         fresh = _save_meal(child, d, kind, user.id)
         context.user_data["draft"] = []
-        return await _show(update, *ui.saved(child, d, kind, fresh))
+        return await _record_and_continue(update, context, child, d, kind, fresh)
 
     if action == "quick":
-        code = parts[2]
-        fresh = _save_meal(child, [code], _guess_kind(), user.id)
-        return await _show(update, *ui.saved(child, [code], _guess_kind(), fresh))
+        code, kind = parts[2], _guess_kind()
+        fresh = _save_meal(child, [code], kind, user.id)
+        return await _record_and_continue(update, context, child, [code], kind, fresh)
 
     if action == "lib":
         return await _show(update, *ui.library(child, intro))
@@ -500,5 +525,5 @@ async def on_free_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     text, kb = ui.home(child, db.intro_map(child["id"]))
     await update.message.reply_text(
         "Тут керування кнопками. Посилання на YouTube теж працює, як раніше.",
-        reply_markup=None)
+        reply_markup=ReplyKeyboardRemove())
     await update.message.reply_text(text, parse_mode=ParseMode.HTML, reply_markup=kb)

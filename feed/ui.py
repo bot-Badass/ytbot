@@ -151,24 +151,33 @@ def pick_kind(codes: list[str]) -> tuple[str, M]:
     return text, M(rows)
 
 
-def saved(child, codes: list[str], kind: str, fresh: list[str]) -> tuple[str, M]:
-    months = months_of(child)
-    lines = [f"✅ Записано: {catalog.MEAL_LABEL[kind]}",
-             ", ".join(catalog.label(c) for c in codes)]
-    rows: list[list[B]] = []
-    if fresh:
-        lines += ["", "🆕 <b>Нові продукти</b>: " + ", ".join(catalog.label(c) for c in fresh),
-                  "",
-                  "Правило трьох днів: тримаємо новий продукт у меню 2-3 дні поспіль "
-                  "і не вводимо інший новий, щоб реакцію було видно однозначно.",
-                  "Нагадаю ввечері спитати, як пройшло."]
-        for c in fresh:
-            p = catalog.product(c)
-            if p and p.get("allergen"):
-                lines.append(f"⚠️ {p['emoji']} {p['name']} - алерген ({p['allergen']}). "
-                             "Наступні рази давати регулярно, не відкладати.")
-        rows += _rows([B(f"⚠️ Реакція на {catalog.product(c)['name']}",
-                         callback_data=f"f:react:{c}") for c in fresh], 1)
+def meal_record(child, codes: list[str], kind: str, ts: int | None = None) -> str:
+    """Постійний запис у стрічці чату. Без кнопок - його ніщо не перезапише."""
+    ts = ts or db.now()
+    day_from, day_to, _ = day_bounds()
+    todays = db.meals_between(child["id"], day_from, day_to)
+    line = " · ".join(catalog.label(c) for c in codes)
+    head = f"✅ <b>{catalog.MEAL_LABEL[kind]}</b> · {local(ts).strftime('%H:%M')}"
+    tail = f"\n\n<i>Сьогодні це {len(todays)}-й прийом їжі.</i>" if len(todays) > 1 else ""
+    return f"{head}\n{line}{tail}"
+
+
+def after_save(child, intro: dict, fresh: list[str]) -> tuple[str, M]:
+    """Окреме повідомлення після запису: попередження і навігація."""
+    if not fresh:
+        return home(child, intro)
+    lines = ["🆕 <b>Нові продукти</b>: " + ", ".join(catalog.label(c) for c in fresh),
+             "",
+             "Правило трьох днів: тримаємо новий продукт у меню 2-3 дні поспіль "
+             "і не вводимо інший новий, щоб реакцію було видно однозначно.",
+             "Нагадаю ввечері спитати, як пройшло."]
+    for c in fresh:
+        prod = catalog.product(c)
+        if prod and prod.get("allergen"):
+            lines.append(f"⚠️ {prod['emoji']} {prod['name']} - алерген ({prod['allergen']}). "
+                         "Наступні рази давати регулярно, не відкладати.")
+    rows = _rows([B(f"⚠️ Реакція: {catalog.label(c)}",
+                    callback_data=f"f:react:{c}") for c in fresh], 1)
     rows.append([B("📔 Щоденник", callback_data="f:diary"), B("🏠 Головна", callback_data="f:home")])
     return "\n".join(lines), M(rows)
 
