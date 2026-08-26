@@ -19,6 +19,8 @@ from pathlib import Path
 BASE = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(BASE))
 
+NAME = "Прикорм · Маленький Всесвіт"
+
 SHORT = ("Щоденник прикорму: що дитина їла, як подавати за віком, "
          "алергени, зростання за ВООЗ.")
 
@@ -65,11 +67,15 @@ async def run(apply: bool) -> None:
     bot = Bot(token())
     async with bot:
         me = await bot.get_me()
+        cur_name = (await bot.get_my_name()).name
         cur_desc = (await bot.get_my_description()).description
         cur_short = (await bot.get_my_short_description()).short_description
         cur_cmds = await bot.get_my_commands()
 
-        print(f"бот: @{me.username} ({me.first_name})\n")
+        print(f"бот: @{me.username}\n")
+        print("── назва ──")
+        print(f"було:  {cur_name}")
+        print(f"стане: {NAME}  [{len(NAME)}/64]\n")
         print("── коротке пояснення ──")
         print(f"було:  {cur_short or '(порожньо)'}")
         print(f"стане: {SHORT}  [{len(SHORT)}/120]\n")
@@ -81,12 +87,14 @@ async def run(apply: bool) -> None:
         print(f"стане: {[c for c, _ in PUBLIC_COMMANDS]} "
               f"+ для власників {[c for c, _ in OWNER_COMMANDS]}\n")
 
-        if len(SHORT) > 120 or len(DESCRIPTION) > 512:
+        if len(NAME) > 64 or len(SHORT) > 120 or len(DESCRIPTION) > 512:
             raise SystemExit("перевищено ліміт Telegram")
         if not apply:
             print("Нічого не змінено. Додай --apply, щоб записати.")
             return
 
+        if cur_name != NAME:
+            await bot.set_my_name(NAME)          # Telegram обмежує зміну назви кількома разами на добу
         await bot.set_my_short_description(SHORT, language_code="uk")
         await bot.set_my_short_description(SHORT)
         await bot.set_my_description(DESCRIPTION, language_code="uk")
