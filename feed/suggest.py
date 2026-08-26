@@ -77,7 +77,7 @@ def _stem(word: str) -> str:
     word = _norm(word)
     for end in ("ами", "ями", "ові", "ею", "ою", "ів", "ам", "ах", "ий", "ої", "ою",
                 "ку", "ці", "ка", "ки", "ко", "ом", "ем", "у", "ю", "и", "і", "а", "я", "е", "о"):
-        if len(word) - len(end) >= 4 and word.endswith(end):
+        if len(word) - len(end) >= 3 and word.endswith(end):
             return word[: -len(end)]
     return word
 
