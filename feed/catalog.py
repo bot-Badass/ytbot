@@ -180,6 +180,23 @@ def recipes_for(months: int) -> list[dict]:
     return [r for r in recipes() if r["age_from"] <= max(months, 6)]
 
 
+def recipes_with(codes: list[str]) -> list[dict]:
+    """Рецепти, у яких є хоч один із названих продуктів. Спершу ті, де їх більше."""
+    wanted = set(codes)
+    hits = [(len(wanted & set(r["products"])), r) for r in recipes()]
+    return [r for n, r in sorted(hits, key=lambda x: -x[0]) if n]
+
+
+def recipe_missing(rid: str, stock: list[str]) -> tuple[list[str], list[str]]:
+    """(що з рецепта вже вдома, чого бракує) за вмістом холодильника."""
+    r = recipe(rid)
+    if not r:
+        return [], []
+    have = set(stock)
+    return ([c for c in r["products"] if c in have],
+            [c for c in r["products"] if c not in have])
+
+
 def recipe(rid: str) -> dict | None:
     return next((r for r in recipes() if r["id"] == rid), None)
 

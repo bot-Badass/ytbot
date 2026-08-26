@@ -432,20 +432,132 @@ def plate_card(child, pid: str, intro: dict) -> tuple[str, M]:
     return "\n".join(lines), M(rows)
 
 
-def recipes_screen(child) -> tuple[str, M]:
+def _recipe_button(r: dict, months: int) -> B:
+    late = "⏳ " if r["age_from"] > months else ""
+    return B(f"{late}{r['emoji']} {r['title']} · {r['time']}", callback_data=f"f:r:{r['id']}")
+
+
+def recipes_screen(child, show_all: bool = False, stock: list[str] | None = None) -> tuple[str, M]:
     months = months_of(child)
-    items = catalog.recipes_for(months)
-    lines = [f"👨‍🍳 <b>Рецепти</b>", f"Доступно за віком: {len(items)} з {len(catalog.recipes())}", ""]
-    rows = [[B(f"{r['emoji']} {r['title']}", callback_data=f"f:r:{r['id']}")] for r in items]
+    every = catalog.recipes()
+    fit = catalog.recipes_for(months)
+    later = [r for r in every if r["age_from"] > months]
+    items = every if show_all else fit
+    stock = stock or []
+
+    lines = [f"👨‍🍳 <b>Рецепти</b>", "",
+             f"{esc(child['name'])}, {growth.age_text(birth_date(child))}",
+             f"Підходять зараз: <b>{len(fit)}</b> з {len(every)}."]
+    if later:
+        by_age = {}
+        for r in later:
+            by_age[r["age_from"]] = by_age.get(r["age_from"], 0) + 1
+        parts = [f"{n} з {age} міс" for age, n in sorted(by_age.items())]
+        lines.append("Решта відкриється з віком: " + ", ".join(parts) + ".")
+    lines += ["",
+              "У кожному рецепті: інгредієнти з вагою, кроки, порада і як заморожувати. "
+              "Без солі і цукру до року."]
+
+    ready = [r for r in fit if not catalog.recipe_missing(r["id"], stock)[1]]
+    if stock:
+        lines.append("")
+        if ready:
+            lines.append(f"🧊 З холодильника можна приготувати прямо зараз: <b>{len(ready)}</b>.")
+        else:
+            lines.append("🧊 Повного набору на жоден рецепт удома поки немає.")
+
+    if show_all:
+        lines.append("")
+        lines.append("<i>Показані всі, ⏳ означає зарано за віком.</i>")
+
+    rows = [[B("🔍 Знайти за продуктом", callback_data="f:rfind")]]
+    if stock:
+        rows.append([B(f"🧊 Що зварити з наявного{f' · {len(ready)}' if ready else ''}",
+                       callback_data="f:rfridge")])
+    rows += [[_recipe_button(r, months)] for r in items]
+    if later:
+        rows.append([B("• За віком" if not show_all else "За віком", callback_data="f:rec"),
+                     B("Усі рецепти" if not show_all else "• Усі рецепти",
+                       callback_data="f:rec:all")])
     rows.append([B("🏠 Головна", callback_data="f:home")])
     return "\n".join(lines), M(rows)
 
 
-def recipe_card(child, rid: str) -> tuple[str, M]:
+RECIPE_FIND_PROMPT = ("🔍 Напиши продукт, і покажу всі рецепти з ним.\n\n"
+                      "Наприклад: <code>курка</code>, <code>гарбуз</code>, "
+                      "<code>сир</code> або кілька через кому.")
+
+
+def recipes_found(child, codes: list[str], found: list[dict],
+                  near: list[dict] | None = None) -> tuple[str, M]:
+    months = months_of(child)
+    lines = ["🔍 <b>Рецепти з: </b>" + ", ".join(catalog.label(c) for c in codes), ""]
+    rows: list[list[B]] = []
+    if found:
+        fit = [r for r in found if r["age_from"] <= months]
+        lines.append(f"Знайшов {len(found)}, підходять за віком {len(fit)}.")
+        rows += [[_recipe_button(r, months)] for r in found]
+    else:
+        lines.append("Рецептів саме з цим поки немає.")
+        if near:
+            lines += ["", "Найближче з тієї ж полиці:"]
+            rows += [[_recipe_button(r, months)] for r in near]
+        else:
+            lines += ["", "Спробуй інший продукт або подивись «🎲 Ще варіанти» "
+                      "в розділі тарілок: там страва збирається без рецепта."]
+    rows.append([B("🔍 Інший продукт", callback_data="f:rfind"),
+                 B("‹ Рецепти", callback_data="f:rec")])
+    rows.append([B("🏠 Головна", callback_data="f:home")])
+    return "\n".join(lines), M(rows)
+
+
+def recipes_from_fridge(child, stock: list[str]) -> tuple[str, M]:
+    months = months_of(child)
+    fit = catalog.recipes_for(months)
+    ready, almost = [], []
+    for r in fit:
+        _, missing = catalog.recipe_missing(r["id"], stock)
+        if not missing:
+            ready.append(r)
+        elif len(missing) == 1:
+            almost.append((r, missing[0]))
+
+    lines = ["🧊 <b>Що зварити з наявного</b>", ""]
+    rows: list[list[B]] = []
+    if ready:
+        lines.append(f"<b>Усе є ({len(ready)}):</b>")
+        lines += [f"· {r['emoji']} {esc(r['title'])} · {esc(r['time'])}" for r in ready]
+        rows += [[_recipe_button(r, months)] for r in ready]
+    else:
+        lines.append("Повного набору на жоден рецепт удома немає. "
+                     "Ось що майже готове:")
+    if almost:
+        lines += ["", f"<b>Бракує однієї позиції ({len(almost)}):</b>"]
+        for r, miss in almost[:8]:
+            lines.append(f"· {r['emoji']} {esc(r['title'])} - купити {catalog.name(miss)}")
+        rows += [[_recipe_button(r, months)] for r, _ in almost[:8]]
+    rows.append([B("🛒 Список покупок", callback_data="f:frbuy"),
+                 B("‹ Рецепти", callback_data="f:rec")])
+    rows.append([B("🏠 Головна", callback_data="f:home")])
+    return "\n".join(lines), M(rows)
+
+
+def recipe_card(child, rid: str, stock: list[str] | None = None) -> tuple[str, M]:
     r = catalog.recipe(rid)
+    months = months_of(child)
     lines = [f"{r['emoji']} <b>{esc(r['title'])}</b>",
-             f"з {r['age_from']} міс · {esc(r['time'])}", "",
-             "<b>Інгредієнти</b>"]
+             f"з {r['age_from']} міс · {esc(r['time'])}"]
+    if r["age_from"] > months:
+        lines.append(f"⏳ Для {esc(child['name'])} ще зарано: страва розрахована на "
+                     f"{r['age_from']} місяців.")
+    if stock:
+        have, missing = catalog.recipe_missing(rid, stock)
+        if have and not missing:
+            lines.append("🧊 Усе є вдома.")
+        elif have:
+            lines.append("🧊 Є вдома: " + ", ".join(catalog.name(c) for c in have)
+                         + ". Бракує: " + ", ".join(catalog.name(c) for c in missing) + ".")
+    lines += ["", "<b>Інгредієнти</b>"]
     lines += [f"· {esc(i)}" for i in r["ingredients"]]
     lines += ["", "<b>Як готувати</b>"]
     lines += [f"{n}. {esc(s)}" for n, s in enumerate(r["steps"], 1)]

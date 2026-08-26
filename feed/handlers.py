@@ -285,6 +285,20 @@ async def on_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         await update.message.reply_text(t_, parse_mode=ParseMode.HTML, reply_markup=kb)
         raise ApplicationHandlerStop
 
+    if kind == "rfind":
+        context.user_data.pop("await", None)
+        codes = suggest.parse_products(text, limit=3)
+        if not codes:
+            context.user_data["await"] = {"k": "rfind"}
+            await update.message.reply_text(
+                "Не впізнав продукт. Напиши простіше, наприклад: курка або гарбуз.")
+            raise ApplicationHandlerStop
+        found = catalog.recipes_with(codes)
+        near = [] if found else catalog.recipes_with(_same_shelf(codes))
+        t_, kb = ui.recipes_found(child, codes, found, near)
+        await update.message.reply_text(t_, parse_mode=ParseMode.HTML, reply_markup=kb)
+        raise ApplicationHandlerStop
+
     if kind == "mnote":
         db.run("UPDATE meal SET note=? WHERE id=? AND child_id=?",
                (text[:300], pending["id"], child["id"]))
@@ -317,6 +331,13 @@ def _save_meal(child, codes: list[str], kind: str, user_id: int) -> list[str]:
         db.add_nudge(child["id"], code, _tonight_ts(), "reaction_check")
         db.add_nudge(child["id"], code, now + 3 * 86400, "three_day")
     return fresh
+
+
+def _same_shelf(codes: list[str]) -> list[str]:
+    """Сусіди по полиці: якщо рецепта з куркою немає, індичка це найближче."""
+    keys = {catalog.key_of(c) for c in codes}
+    return [p["code"] for p in catalog.products().values()
+            if catalog.key_of(p["code"]) in keys and p["code"] not in codes]
 
 
 def _tonight_ts() -> int:
@@ -580,10 +601,18 @@ async def on_button(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         return await _show(update, ui.HAVE_PROMPT)
 
     if action == "rec":
-        return await _show(update, *ui.recipes_screen(child))
+        show_all = len(parts) > 2 and parts[2] == "all"
+        return await _show(update, *ui.recipes_screen(child, show_all, db.pantry_codes(fid)))
+
+    if action == "rfind":
+        context.user_data["await"] = {"k": "rfind"}
+        return await _show(update, ui.RECIPE_FIND_PROMPT)
+
+    if action == "rfridge":
+        return await _show(update, *ui.recipes_from_fridge(child, db.pantry_codes(fid)))
 
     if action == "r":
-        return await _show(update, *ui.recipe_card(child, parts[2]))
+        return await _show(update, *ui.recipe_card(child, parts[2], db.pantry_codes(fid)))
 
     if action == "ru":
         recipe = catalog.recipe(parts[2])

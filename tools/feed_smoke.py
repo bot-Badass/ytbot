@@ -246,8 +246,21 @@ async def main() -> None:
     assert ctx.user_data["draft"] == catalog.plate("p01")["items"]
     await press("f:save:dinner")
     await press("f:rec")
+    await press("f:rec:all")
     for r in catalog.recipes():
         await press(f"f:r:{r['id']}")
+    await press("f:rfridge")
+    await press("f:rfind")
+    await say("курка")
+    assert "Рецепти з" in bot.sent[-1], bot.sent[-1]
+    await press("f:rfind")
+    await say("хтозна що")                       # має попросити ще раз
+    ctx.user_data.pop("await", None)
+    found = catalog.recipes_with(["kurka"])
+    assert found, "пошук рецептів за продуктом нічого не знайшов"
+    covered = {c for r in catalog.recipes() for c in r["products"]}
+    print(f"рецепти: {len(catalog.recipes())} штук, покрито {len(covered)} продуктів, "
+          f"пошук «курка» -> {len(found)}")
     await press("f:ru:r02")
     await press("f:save:snack")
     print(f"тарілок {len(catalog.plates())}, рецептів {len(catalog.recipes())} перевірено")
