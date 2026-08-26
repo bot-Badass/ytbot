@@ -10,3 +10,6 @@ tgapi-temp/
 build.log
 __pycache__/
 *.pyc
+
+# база прикорму - персональні дані дитини, у git НІКОЛИ
+var/

@@ -36,6 +36,9 @@ from telegram.ext import (
     filters,
 )
 
+from feed import handlers as feed
+from feed import reminders as feed_reminders
+
 BASE_DIR = Path(__file__).resolve().parent
 
 
@@ -323,7 +326,7 @@ def allowed(update: Update) -> bool:
     return bool(user and user.id in ALLOWED_USERS)
 
 
-async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+async def cmd_yt(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not allowed(update):
         return
     await update.message.reply_text(
@@ -529,12 +532,25 @@ def main() -> None:
         log.info("локальний Bot API: %s (ліміт %s МБ)", LOCAL_API_URL, MAX_UPLOAD_MB)
 
     app = builder.build()
-    app.add_handler(CommandHandler(["start", "help"], cmd_start))
-    app.add_handler(CallbackQueryHandler(on_choice, pattern=r"^(dl|x)\|"))
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, on_link))
-    app.add_error_handler(on_error)
 
-    log.info("ytbot стартує, ліміт %s МБ, паралельно %s", MAX_UPLOAD_MB, MAX_PARALLEL)
+    # group -1: бот чекає на текстову відповідь (імʼя, дата, вага) - перехоплюємо першими
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, feed.on_text), group=-1)
+
+    # group 0: прикорм і завантаження з YouTube
+    app.add_handler(CommandHandler(["start", "help"], feed.cmd_start))
+    app.add_handler(CommandHandler("id", feed.cmd_id))
+    app.add_handler(CommandHandler("yt", cmd_yt))
+    app.add_handler(CallbackQueryHandler(feed.on_button, pattern=r"^f:"))
+    app.add_handler(CallbackQueryHandler(on_choice, pattern=r"^(dl|x)\|"))
+    app.add_handler(MessageHandler(filters.TEXT & filters.Regex(URL_RE), on_link))
+
+    # group 1: решта тексту - показуємо головну прикорму
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, feed.on_free_text), group=1)
+
+    app.add_error_handler(on_error)
+    feed_reminders.install(app)
+
+    log.info("бот стартує: прикорм + YouTube, ліміт %s МБ, паралельно %s", MAX_UPLOAD_MB, MAX_PARALLEL)
     app.run_polling(drop_pending_updates=True, allowed_updates=Update.ALL_TYPES)
 
 
