@@ -21,6 +21,20 @@ GROUPS: dict[str, tuple[str, str]] = {
 
 GROUP_ORDER = list(GROUPS)
 
+# Мʼясо, риба, яйця і бобові живуть окремими полицями, бо шукати індичку серед
+# сорока позицій незручно. Для балансу тарілки це і далі ОДИН слот білка:
+# group у продукті лишається protein, ділить тільки поле sub.
+SUBGROUPS: dict[str, tuple[str, str]] = {
+    "meat": ("🍖", "Мʼясо"),
+    "fish": ("🐟", "Риба і морепродукти"),
+    "egg": ("🥚", "Яйця"),
+    "legume": ("🫘", "Бобові"),
+}
+
+SUBS_OF: dict[str, tuple[str, ...]] = {"protein": ("meat", "fish", "egg", "legume")}
+
+ALLERGEN_MARK = "❗"
+
 CHOKING: dict[str, str] = {
     "low": "низький",
     "med": "середній",
@@ -88,8 +102,53 @@ def product(code: str) -> dict | None:
     return products().get(code)
 
 
-def by_group(group: str) -> list[dict]:
-    return [p for p in products().values() if p["group"] == group]
+# ─────────────────────── групи і полиці ───────────────────────
+
+
+def split_key(key: str) -> tuple[str, str | None]:
+    """«protein.fish» -> («protein», «fish»), «veg» -> («veg», None)."""
+    group, _, sub = key.partition(".")
+    return group, (sub or None)
+
+
+def key_of(code: str) -> str:
+    p = product(code)
+    if not p:
+        return "veg"
+    return f"{p['group']}.{p['sub']}" if p.get("sub") else p["group"]
+
+
+def nav_keys() -> list[str]:
+    """Порядок полиць для меню: білок розкладений на мʼясо/рибу/яйця/бобові."""
+    keys: list[str] = []
+    for g in GROUP_ORDER:
+        subs = SUBS_OF.get(g)
+        keys += [f"{g}.{s}" for s in subs] if subs else [g]
+    return keys
+
+
+def default_key(key: str) -> str:
+    """«protein» -> «protein.meat»: група з полицями завжди відкривається на першій."""
+    group, sub = split_key(key)
+    subs = SUBS_OF.get(group)
+    return f"{group}.{subs[0]}" if subs and not sub else key
+
+
+def key_title(key: str) -> tuple[str, str]:
+    group, sub = split_key(key)
+    if sub:
+        emoji, title = SUBGROUPS[sub]
+        return emoji, f"{GROUPS[group][1]}: {title.lower()}"
+    return GROUPS[group]
+
+
+def by_group(group: str, sub: str | None = None) -> list[dict]:
+    return [p for p in products().values()
+            if p["group"] == group and (sub is None or p.get("sub") == sub)]
+
+
+def by_key(key: str) -> list[dict]:
+    return by_group(*split_key(key))
 
 
 def band_for(months: int) -> str:
@@ -138,6 +197,21 @@ def allergens() -> list[str]:
     return seen
 
 
+def allergen_codes() -> list[str]:
+    return [c for c, p in products().items() if p.get("allergen")]
+
+
+def mark_allergen(code: str) -> str:
+    p = product(code)
+    return ALLERGEN_MARK if p and p.get("allergen") else ""
+
+
+def name(code: str) -> str:
+    """Назва без емодзі, з позначкою алергену."""
+    p = product(code)
+    return f"{p['name']}{mark_allergen(code)}" if p else code
+
+
 def label(code: str) -> str:
     p = product(code)
-    return f"{p['emoji']} {p['name']}" if p else code
+    return f"{p['emoji']} {p['name']}{mark_allergen(code)}" if p else code

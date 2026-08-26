@@ -11,12 +11,6 @@ from . import catalog, db, growth, suggest
 
 TZ = ZoneInfo("Europe/Kyiv")
 
-BALANCE = {
-    "plant": ("🥦", "овоч або фрукт", ("veg", "fruit")),
-    "grain": ("🥣", "вуглевод", ("grain",)),
-    "protein": ("🍖", "білок", ("protein", "dairy")),
-    "fat": ("🥑", "жир", ("fat",)),
-}
 
 
 def esc(text: str) -> str:
@@ -43,6 +37,16 @@ def months_of(child) -> int:
 
 def _rows(buttons: list[B], per_row: int = 2) -> list[list[B]]:
     return [buttons[i:i + per_row] for i in range(0, len(buttons), per_row)]
+
+
+def sub_tabs(key: str, prefix: str) -> list[list[B]]:
+    """Ряд вкладок усередині групи. Для білка це мʼясо / риба / яйця / бобові."""
+    group, sub = catalog.split_key(key)
+    subs = catalog.SUBS_OF.get(group)
+    if not subs:
+        return []
+    return _rows([B(("• " if s == sub else "") + f"{catalog.SUBGROUPS[s][0]} {catalog.SUBGROUPS[s][1].split()[0]}",
+                    callback_data=f"{prefix}:{group}.{s}") for s in subs], 4)
 
 
 def mark(code: str, intro: dict, months: int) -> str:
@@ -79,11 +83,14 @@ def home(child, intro: dict) -> tuple[str, M]:
     if watch:
         lines.append("Під наглядом: " + ", ".join(catalog.label(c) for c in watch[:4]))
 
+    stock = len(db.pantry_codes(child["family_id"]))
+    fridge = f" · {stock}" if stock else ""
     kb = M([
         [B("🍽 Записати прийом їжі", callback_data="f:new")],
-        [B("🥕 Продукти", callback_data="f:lib"), B("🍲 Тарілки", callback_data="f:plates")],
-        [B("👨‍🍳 Рецепти", callback_data="f:rec"), B("📔 Щоденник", callback_data="f:diary")],
-        [B("📈 Зростання", callback_data="f:grow"), B("⚙️ Налаштування", callback_data="f:set")],
+        [B(f"🧊 Холодильник{fridge}", callback_data="f:fr"), B("🍲 Тарілки", callback_data="f:plates")],
+        [B("🥕 Продукти", callback_data="f:lib"), B("👨‍🍳 Рецепти", callback_data="f:rec")],
+        [B("📔 Щоденник", callback_data="f:diary"), B("📈 Зростання", callback_data="f:grow")],
+        [B("⚙️ Налаштування", callback_data="f:set")],
     ])
     return "\n".join(lines), kb
 
@@ -92,14 +99,12 @@ def home(child, intro: dict) -> tuple[str, M]:
 
 
 def balance_hint(codes: list[str]) -> str:
-    have = {catalog.product(c)["group"] for c in codes if catalog.product(c)}
-    missing = [f"{emoji} {name}" for _, (emoji, name, groups) in BALANCE.items()
-               if not have & set(groups)]
     if not codes:
         return "Обери, що було в тарілці. Можна один продукт, можна пʼять."
+    missing = suggest.missing_slots(codes)
     if not missing:
         return "Тарілка збалансована: є рослинне, вуглевод, білок і жир."
-    return "Не вистачає: " + ", ".join(missing)
+    return "Не вистачає: " + ", ".join(suggest.SLOT_LABEL[s] for s in missing)
 
 
 def draft(child, codes: list[str], intro: dict, group: str | None = None) -> tuple[str, M]:
@@ -117,18 +122,23 @@ def draft(child, codes: list[str], intro: dict, group: str | None = None) -> tup
         rows += _rows([B(("✔️ " if c in codes else "") + catalog.label(c),
                          callback_data=f"f:sel:{c}") for c in fav])
     elif group:
-        emoji, title = catalog.GROUPS[group]
+        group = catalog.default_key(group)
+        emoji, title = catalog.key_title(group)
         head.append("")
         head.append(f"{emoji} <b>{title}</b>")
-        items = sorted(catalog.by_group(group), key=lambda p: (p["from_month"], p["name"]))
+        rows += sub_tabs(group, "f:grp")
+        items = sorted(catalog.by_key(group), key=lambda p: (p["from_month"], p["name"]))
         rows += _rows([
-            B(("✔️ " if p["code"] in codes else mark(p["code"], intro, months) + " ") + p["name"],
+            B(("✔️ " if p["code"] in codes else mark(p["code"], intro, months) + " ")
+              + catalog.name(p["code"]),
               callback_data=f"f:sel:{p['code']}")
             for p in items
         ])
 
     nav = [B("⭐ Часте", callback_data="f:grp:fav")]
-    nav += [B(f"{catalog.GROUPS[g][0]} {catalog.GROUPS[g][1]}", callback_data=f"f:grp:{g}")
+    nav += [B(f"{catalog.GROUPS[g][0]} {catalog.GROUPS[g][1]}",
+              callback_data=f"f:grp:{g}.{catalog.SUBS_OF[g][0]}" if g in catalog.SUBS_OF
+              else f"f:grp:{g}")
             for g in catalog.GROUP_ORDER]
     rows += _rows(nav)
 
@@ -190,24 +200,31 @@ def library(child, intro: dict) -> tuple[str, M]:
     lines = ["🥕 <b>Продукти</b>",
              f"Введено {len(intro)} з {len(catalog.products())}.",
              "",
-             "✅ введено · 🆕 ще ні · 👀 під наглядом · ⛔ уникаємо · ⏳ зарано за віком"]
+             "✅ введено · 🆕 ще ні · 👀 під наглядом · ⛔ уникаємо · ⏳ зарано за віком",
+             f"{catalog.ALLERGEN_MARK} алерген: вводити рано і потім регулярно",
+             "",
+             "<i>Мʼясо, риба, яйця і бобові лежать на різних полицях, але для балансу "
+             "тарілки це один білок.</i>"]
     rows = []
-    for g in catalog.GROUP_ORDER:
-        emoji, title = catalog.GROUPS[g]
-        items = catalog.by_group(g)
+    for key in catalog.nav_keys():
+        emoji, title = catalog.key_title(key)
+        items = catalog.by_key(key)
         done = sum(1 for p in items if p["code"] in intro)
-        rows.append([B(f"{emoji} {title} · {done}/{len(items)}", callback_data=f"f:lg:{g}")])
+        rows.append([B(f"{emoji} {title} · {done}/{len(items)}", callback_data=f"f:lg:{key}")])
     rows.append([B("🏠 Головна", callback_data="f:home")])
     return "\n".join(lines), M(rows)
 
 
 def group_list(child, group: str, intro: dict) -> tuple[str, M]:
     months = months_of(child)
-    emoji, title = catalog.GROUPS[group]
-    items = sorted(catalog.by_group(group), key=lambda p: (p["from_month"], p["name"]))
-    lines = [f"{emoji} <b>{title}</b>", f"Вік {child['name']}: {growth.age_text(birth_date(child))}"]
-    rows = _rows([B(f"{mark(p['code'], intro, months)} {p['name']}",
-                    callback_data=f"f:p:{p['code']}") for p in items])
+    group = catalog.default_key(group)
+    emoji, title = catalog.key_title(group)
+    items = sorted(catalog.by_key(group), key=lambda p: (p["from_month"], p["name"]))
+    lines = [f"{emoji} <b>{title}</b>",
+             f"Вік {child['name']}: {growth.age_text(birth_date(child))} · позицій {len(items)}"]
+    rows = sub_tabs(group, "f:lg")
+    rows += _rows([B(f"{mark(p['code'], intro, months)} {catalog.name(p['code'])}",
+                     callback_data=f"f:p:{p['code']}") for p in items])
     rows.append([B("‹ Продукти", callback_data="f:lib"), B("🏠 Головна", callback_data="f:home")])
     return "\n".join(lines), M(rows)
 
@@ -218,7 +235,7 @@ def card(child, code: str, intro: dict) -> tuple[str, M]:
     band = catalog.band_for(months)
     row = intro.get(code)
 
-    head = [f"{p['emoji']} <b>{esc(p['name'])}</b>"]
+    head = [f"{p['emoji']} <b>{esc(p['name'])}</b>{catalog.mark_allergen(code)}"]
     meta = [f"з {p['from_month']} міс", f"ризик подавитися: {catalog.CHOKING[p['choking']]}"]
     if p.get("allergen"):
         meta.append(f"⚠️ алерген: {p['allergen']}")
@@ -263,7 +280,8 @@ def card(child, code: str, intro: dict) -> tuple[str, M]:
         st_row.append(B("↩️ Зняти позначку", callback_data=f"f:st:{code}:ok"))
     if st_row:
         rows.append(st_row)
-    rows.append([B(f"‹ {catalog.GROUPS[p['group']][1]}", callback_data=f"f:lg:{p['group']}"),
+    back_key = catalog.key_of(code)
+    rows.append([B(f"‹ {catalog.key_title(back_key)[1]}", callback_data=f"f:lg:{back_key}"),
                  B("🏠 Головна", callback_data="f:home")])
     return "\n".join(head), M(rows)
 
@@ -335,11 +353,11 @@ def plates_screen(child, band: str | None = None) -> tuple[str, M]:
 
 
 def _plate_button(codes: list[str], prefix: str) -> B:
-    return B(" · ".join(catalog.product(c)["name"] for c in codes),
+    return B(" · ".join(catalog.name(c) for c in codes),
              callback_data=f"{prefix}:{suggest.encode(codes)}")
 
 
-def generated(child, plates: list[list[str]]) -> tuple[str, M]:
+def generated(child, plates: list[list[str]], back: str = "f:gen") -> tuple[str, M]:
     lines = ["🎲 <b>Свіжі варіанти</b>",
              f"{catalog.band_title(catalog.band_for(months_of(child)))} · зібрано за віком, "
              "переважно з уже введеного, плюс потроху нового.", ""]
@@ -349,14 +367,14 @@ def generated(child, plates: list[list[str]]) -> tuple[str, M]:
     else:
         lines.append("Тисни варіант, щоб побачити, як подавати кожен продукт.")
     rows = [[_plate_button(pl, "f:gp")] for pl in plates]
-    rows.append([B("🎲 Ще", callback_data="f:gen"), B("✍️ У мене вже є…", callback_data="f:have")])
+    rows.append([B("🎲 Ще", callback_data=back), B("✍️ У мене вже є…", callback_data="f:have")])
     rows.append([B("‹ Тарілки", callback_data="f:plates"), B("🏠 Головна", callback_data="f:home")])
     return "\n".join(lines), M(rows)
 
 
 def gen_plate_card(child, codes: list[str], intro: dict, back: str = "f:gen") -> tuple[str, M]:
     months = months_of(child)
-    lines = ["🍲 <b>" + esc(" · ".join(catalog.product(c)["name"] for c in codes)) + "</b>", ""]
+    lines = ["🍲 <b>" + esc(" · ".join(catalog.name(c) for c in codes)) + "</b>", ""]
     for code in codes:
         prod = catalog.product(code)
         lines.append(f"{mark(code, intro, months)} {prod['emoji']} <b>{esc(prod['name'])}</b>")
@@ -392,6 +410,7 @@ def have(child, found: list[str], plates: list[list[str]], intro: dict) -> tuple
     rows = [[_plate_button(pl, "f:gp")] for pl in plates]
     if not need:
         rows = [[B("🍽 Подали цю тарілку", callback_data=f"f:gu:{suggest.encode(found)}")]]
+    rows.append([B("🧊 Скласти в холодильник", callback_data="f:frput")])
     rows.append([B("✍️ Інший набір", callback_data="f:have"),
                  B("🎲 Ще варіанти", callback_data="f:gen")])
     rows.append([B("‹ Тарілки", callback_data="f:plates"), B("🏠 Головна", callback_data="f:home")])
@@ -550,4 +569,169 @@ def settings(child, family_id: int, remind: bool) -> tuple[str, M]:
             [B(("🔕 Вимкнути" if remind else "🔔 Увімкнути") + " нагадування", callback_data="f:rem")],
             [B("✏️ Змінити дату народження", callback_data="f:editbirth")],
             [B("🏠 Головна", callback_data="f:home")]]
+    return "\n".join(lines), M(rows)
+
+
+# ─────────────────────────── холодильник ───────────────────────────
+
+
+STALE_DAYS = 7
+
+
+def _stock_lines(stock: list[str], since: dict[str, int] | None = None) -> list[str]:
+    """Вміст холодильника по полицях, у тому ж порядку, що й бібліотека."""
+    lines: list[str] = []
+    now_ts = db.now()
+    for key in catalog.nav_keys():
+        emoji, title = catalog.key_title(key)
+        codes = [c for c in stock if catalog.key_of(c) == key]
+        if not codes:
+            continue
+        parts = []
+        for c in codes:
+            days = (now_ts - since.get(c, now_ts)) // 86400 if since else 0
+            old = f" <i>({days} дн.)</i>" if days >= STALE_DAYS else ""
+            parts.append(f"{catalog.name(c)}{old}")
+        lines.append(f"{emoji} <b>{title}</b>: " + ", ".join(parts))
+    return lines
+
+
+def fridge(child, stock: list[str], since: dict[str, int], intro: dict) -> tuple[str, M]:
+    lines = ["🧊 <b>Холодильник</b>", ""]
+    if not stock:
+        lines += ["Поки порожній.",
+                  "",
+                  "Склади сюди те, що є вдома - і я збиратиму тарілки тільки з цього "
+                  "та підкажу, що докупити на тиждень.",
+                  "",
+                  "Найшвидше через «✍️ Списком»: напиши <code>морква, курка, йогурт</code>."]
+    else:
+        lines.append(f"Удома {len(stock)} продукт(и):")
+        lines += _stock_lines(stock, since)
+        need = suggest.missing_slots(stock)
+        lines.append("")
+        if need:
+            lines.append("Для повної тарілки бракує: "
+                         + ", ".join(suggest.SLOT_LABEL[s] for s in need))
+        else:
+            lines.append("Тарілку можна скласти хоч зараз: є рослинне, вуглевод, білок і жир.")
+        stale = [c for c in stock if (db.now() - since.get(c, db.now())) // 86400 >= STALE_DAYS]
+        if stale:
+            lines.append(f"Лежить понад тиждень: " + ", ".join(catalog.name(c) for c in stale)
+                         + ". Перевір, чи не зіпсувалось.")
+
+    rows: list[list[B]] = []
+    if stock:
+        rows.append([B("🍲 Скласти тарілку з цього", callback_data="f:frgen")])
+    rows.append([B("🛒 Список покупок на тиждень", callback_data="f:frbuy")])
+    rows.append([B("➕ Додати", callback_data="f:fradd"), B("✍️ Списком", callback_data="f:frtext")])
+    if stock:
+        rows.append([B("➖ Прибрати", callback_data="f:frdel"),
+                     B("🧹 Спорожнити", callback_data="f:frclear")])
+    rows.append([B("🏠 Головна", callback_data="f:home")])
+    return "\n".join(lines), M(rows)
+
+
+def fridge_pick(child, key: str, stock: list[str], intro: dict) -> tuple[str, M]:
+    months = months_of(child)
+    key = catalog.default_key(key)
+    emoji, title = catalog.key_title(key)
+    lines = ["➕ <b>Що поклали в холодильник</b>",
+             f"{emoji} {title}",
+             "",
+             "Тисни продукт, щоб покласти або забрати. ✔️ значить, що він уже вдома."]
+    if stock:
+        lines += ["", "Зараз усередині: " + ", ".join(catalog.name(c) for c in stock)]
+    rows = sub_tabs(key, "f:fradd")
+    items = sorted(catalog.by_key(key), key=lambda p: (p["from_month"], p["name"]))
+    rows += _rows([B(("✔️ " if p["code"] in stock else mark(p["code"], intro, months) + " ")
+                     + catalog.name(p["code"]),
+                     callback_data=f"f:frt:{p['code']}") for p in items])
+    nav = [B(f"{catalog.GROUPS[g][0]} {catalog.GROUPS[g][1]}",
+             callback_data=f"f:fradd:{g}.{catalog.SUBS_OF[g][0]}" if g in catalog.SUBS_OF
+             else f"f:fradd:{g}")
+           for g in catalog.GROUP_ORDER]
+    rows += _rows(nav)
+    rows.append([B("🧊 Готово", callback_data="f:fr")])
+    return "\n".join(lines), M(rows)
+
+
+def fridge_remove(child, stock: list[str]) -> tuple[str, M]:
+    lines = ["➖ <b>Що закінчилось</b>", "",
+             "Тисни продукт, щоб прибрати його з холодильника."]
+    rows = _rows([B(catalog.label(c), callback_data=f"f:frx:{c}") for c in stock])
+    rows.append([B("🧊 Готово", callback_data="f:fr")])
+    return "\n".join(lines), M(rows)
+
+
+FRIDGE_TEXT_PROMPT = (
+    "✍️ Напиши одним повідомленням, що є вдома - через кому.\n\n"
+    "Наприклад: <code>морква, гречка, індичка, йогурт, олія</code>\n\n"
+    "Розпізнаю до 20 продуктів за раз і складу їх у холодильник."
+)
+
+
+def fridge_added(added: list[str], known: list[str]) -> tuple[str, M]:
+    lines = []
+    if added:
+        lines.append("🧊 Поклав у холодильник: " + ", ".join(catalog.label(c) for c in added))
+    if known:
+        lines.append("Уже було: " + ", ".join(catalog.name(c) for c in known))
+    if not lines:
+        lines.append("Не впізнав жодного продукту. Напиши простіше, наприклад: морква, гречка.")
+    rows = [[B("🧊 Холодильник", callback_data="f:fr")],
+            [B("✍️ Ще списком", callback_data="f:frtext"), B("🏠 Головна", callback_data="f:home")]]
+    return "\n".join(lines), M(rows)
+
+
+def fridge_plates(child, plates: list[list[str]], stock: list[str]) -> tuple[str, M]:
+    lines = ["🍲 <b>Тарілки з холодильника</b>",
+             f"{catalog.band_title(catalog.band_for(months_of(child)))} · зібрано тільки з того, "
+             "що є вдома.", ""]
+    if not plates:
+        lines.append("З наявного тарілку зібрати не вдалось. Схоже, продукти ще зарано за віком "
+                     "або їх надто мало. Подивись список покупок.")
+    else:
+        need = suggest.missing_slots(stock)
+        if need:
+            lines.append("У холодильнику немає нічого під: "
+                         + ", ".join(suggest.SLOT_LABEL[s] for s in need)
+                         + ". Тому частина тарілок неповна.")
+        lines.append("Тисни варіант, щоб побачити, як подавати кожен продукт.")
+    rows = [[_plate_button(pl, "f:gp")] for pl in plates]
+    rows.append([B("🎲 Ще", callback_data="f:frgen"),
+                 B("🛒 Що докупити", callback_data="f:frbuy")])
+    rows.append([B("🧊 Холодильник", callback_data="f:fr"), B("🏠 Головна", callback_data="f:home")])
+    return "\n".join(lines), M(rows)
+
+
+def fridge_shopping(child, items: list[tuple[str, str]], stock: list[str],
+                    intro: dict) -> tuple[str, M]:
+    months = months_of(child)
+    lines = ["🛒 <b>Покупки на тиждень</b>",
+             f"{esc(child['name'])}, {growth.age_text(birth_date(child))} "
+             f"Рахую на 7 днів уперед і віднімаю те, що вже в холодильнику.", ""]
+    if not items:
+        lines.append("Докуповувати нічого: на тиждень удома вистачає всього.")
+    else:
+        for code, why in items:
+            prod = catalog.product(code)
+            state = "уже їсть" if intro.get(code) and intro[code]["status"] == "ok" else (
+                "нове" if code not in intro else "знайоме")
+            lines.append(f"{mark(code, intro, months)} {prod['emoji']} <b>{esc(prod['name'])}</b>"
+                         f"{catalog.mark_allergen(code)} · {state}")
+            lines.append(f"   <i>{esc(why)}</i>")
+        fresh = [c for c, _ in items if c not in intro]
+        if len(fresh) > 2:
+            lines += ["", f"<i>Нового в списку {len(fresh)} позицій - це багато для одного "
+                      "тижня. Візьми 2-3 і вводь по одному, тримаючи кожне 2-3 дні поспіль. "
+                      "Решта нікуди не дінеться.</i>"]
+        elif fresh:
+            lines += ["", "<i>Нове тут: " + ", ".join(catalog.name(c) for c in fresh)
+                      + ". Вводь по одному і тримай 2-3 дні поспіль, "
+                      "щоб реакцію було видно однозначно.</i>"]
+    rows = []
+    if items:
+        rows.append([B("✅ Купив, усе в холодильник", callback_data="f:frbuyall")])
+    rows.append([B("🧊 Холодильник", callback_data="f:fr"), B("🏠 Головна", callback_data="f:home")])
     return "\n".join(lines), M(rows)

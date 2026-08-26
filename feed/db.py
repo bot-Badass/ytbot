@@ -91,6 +91,13 @@ CREATE TABLE IF NOT EXISTS nudge (
     done        INTEGER NOT NULL DEFAULT 0
 );
 CREATE INDEX IF NOT EXISTS nudge_due ON nudge(done, due_ts);
+CREATE TABLE IF NOT EXISTS pantry (
+    family_id   INTEGER NOT NULL REFERENCES family(id),
+    code        TEXT NOT NULL,
+    added_ts    INTEGER NOT NULL,
+    by_user     INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (family_id, code)
+);
 """
 
 _conn: sqlite3.Connection | None = None
@@ -305,3 +312,46 @@ def close_nudges_for(child_id: int, code: str) -> None:
 
 def family_chats(family_id: int) -> list[int]:
     return [r["user_id"] for r in family_members(family_id)]
+
+
+# ─────────────────────── холодильник ───────────────────────
+
+
+def pantry(family_id: int) -> list[sqlite3.Row]:
+    return q("SELECT * FROM pantry WHERE family_id=? ORDER BY added_ts", (family_id,))
+
+
+def pantry_codes(family_id: int) -> list[str]:
+    return [r["code"] for r in pantry(family_id)]
+
+
+def pantry_add(family_id: int, codes: Iterable[str], by_user: int = 0) -> list[str]:
+    """Кладе продукти в холодильник. Повертає ті, яких там ще не було."""
+    have = set(pantry_codes(family_id))
+    fresh = [c for c in dict.fromkeys(codes) if c not in have]
+    for code in fresh:
+        run("INSERT OR IGNORE INTO pantry(family_id, code, added_ts, by_user) VALUES(?,?,?,?)",
+            (family_id, code, now(), by_user))
+    return fresh
+
+
+def pantry_remove(family_id: int, code: str) -> None:
+    run("DELETE FROM pantry WHERE family_id=? AND code=?", (family_id, code))
+
+
+def pantry_toggle(family_id: int, code: str, by_user: int = 0) -> bool:
+    """True якщо продукт поклали, False якщо забрали."""
+    if q1("SELECT code FROM pantry WHERE family_id=? AND code=?", (family_id, code)):
+        pantry_remove(family_id, code)
+        return False
+    pantry_add(family_id, [code], by_user)
+    return True
+
+
+def pantry_clear(family_id: int) -> None:
+    run("DELETE FROM pantry WHERE family_id=?", (family_id,))
+
+
+def pantry_since(family_id: int, code: str) -> int:
+    row = q1("SELECT added_ts FROM pantry WHERE family_id=? AND code=?", (family_id, code))
+    return row["added_ts"] if row else 0

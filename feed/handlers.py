@@ -244,10 +244,24 @@ async def on_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
                 "Не впізнав жодного продукту. Напиши простіше, наприклад: морква і курка.")
             context.user_data["await"] = {"k": "have"}
             raise ApplicationHandlerStop
+        context.user_data["found"] = found
         months = ui.months_of(child)
         intro = db.intro_map(child["id"])
         plates = suggest.complete(months, intro, found, 3)
         t_, kb = ui.have(child, found, plates, intro)
+        await update.message.reply_text(t_, parse_mode=ParseMode.HTML, reply_markup=kb)
+        raise ApplicationHandlerStop
+
+    if kind == "fridge":
+        context.user_data.pop("await", None)
+        found = suggest.parse_products(text, limit=20)
+        if not found:
+            context.user_data["await"] = {"k": "fridge"}
+            await update.message.reply_text(
+                "Не впізнав жодного продукту. Напиши простіше, наприклад: морква, гречка.")
+            raise ApplicationHandlerStop
+        added = db.pantry_add(child["family_id"], found, user.id)
+        t_, kb = ui.fridge_added(added, [c for c in found if c not in added])
         await update.message.reply_text(t_, parse_mode=ParseMode.HTML, reply_markup=kb)
         raise ApplicationHandlerStop
 
@@ -392,8 +406,7 @@ async def on_button(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             await query.answer("У тарілці вже 6 продуктів", show_alert=True)
         else:
             d.append(code)
-        group = catalog.product(code)["group"] if catalog.product(code) else None
-        return await _show(update, *ui.draft(child, d, intro, group))
+        return await _show(update, *ui.draft(child, d, intro, catalog.key_of(code)))
 
     if action == "save":
         d = _draft(context)
@@ -410,6 +423,70 @@ async def on_button(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         code, kind = parts[2], _guess_kind()
         fresh = _save_meal(child, [code], kind, user.id)
         return await _record_and_continue(update, context, child, [code], kind, fresh)
+
+    fid = child["family_id"]
+
+    if action == "fr":
+        context.user_data.pop("await", None)
+        stock = db.pantry_codes(fid)
+        since = {r["code"]: r["added_ts"] for r in db.pantry(fid)}
+        return await _show(update, *ui.fridge(child, stock, since, intro))
+
+    if action == "fradd":
+        key = parts[2] if len(parts) > 2 else "veg"
+        return await _show(update, *ui.fridge_pick(child, key, db.pantry_codes(fid), intro))
+
+    if action == "frt":
+        code = parts[2]
+        put = db.pantry_toggle(fid, code, user.id)
+        await query.answer("Поклав у холодильник" if put else "Забрав з холодильника")
+        return await _show(update, *ui.fridge_pick(child, catalog.key_of(code),
+                                                   db.pantry_codes(fid), intro))
+
+    if action == "frdel":
+        stock = db.pantry_codes(fid)
+        if not stock:
+            return await _show(update, *ui.fridge(child, stock, {}, intro))
+        return await _show(update, *ui.fridge_remove(child, stock))
+
+    if action == "frx":
+        db.pantry_remove(fid, parts[2])
+        stock = db.pantry_codes(fid)
+        if not stock:
+            return await _show(update, *ui.fridge(child, stock, {}, intro))
+        return await _show(update, *ui.fridge_remove(child, stock))
+
+    if action == "frclear":
+        db.pantry_clear(fid)
+        return await _show(update, *ui.fridge(child, [], {}, intro))
+
+    if action == "frtext":
+        context.user_data["await"] = {"k": "fridge"}
+        return await _show(update, ui.FRIDGE_TEXT_PROMPT)
+
+    if action == "frgen":
+        stock = db.pantry_codes(fid)
+        context.user_data["plate_back"] = "f:frgen"
+        plates = suggest.stock_plates(ui.months_of(child), intro, stock, 6)
+        return await _show(update, *ui.fridge_plates(child, plates, stock))
+
+    if action == "frbuy":
+        stock = db.pantry_codes(fid)
+        items = suggest.shopping(ui.months_of(child), intro, stock)
+        context.user_data["buy"] = [c for c, _ in items]
+        return await _show(update, *ui.fridge_shopping(child, items, stock, intro))
+
+    if action == "frbuyall":
+        db.pantry_add(fid, context.user_data.get("buy", []), user.id)
+        context.user_data.pop("buy", None)
+        stock = db.pantry_codes(fid)
+        since = {r["code"]: r["added_ts"] for r in db.pantry(fid)}
+        return await _show(update, *ui.fridge(child, stock, since, intro))
+
+    if action == "frput":
+        codes = context.user_data.get("found", [])
+        added = db.pantry_add(fid, codes, user.id)
+        return await _show(update, *ui.fridge_added(added, [c for c in codes if c not in added]))
 
     if action == "lib":
         return await _show(update, *ui.library(child, intro))
@@ -457,6 +534,7 @@ async def on_button(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         return await _show(update, *ui.pick_kind(context.user_data["draft"]))
 
     if action == "gen":
+        context.user_data["plate_back"] = "f:gen"
         plates = suggest.generate(ui.months_of(child), intro, 6)
         return await _show(update, *ui.generated(child, plates))
 
@@ -464,7 +542,8 @@ async def on_button(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         codes = suggest.decode(parts[2])
         if not codes:
             return await _show(update, *ui.plates_screen(child))
-        return await _show(update, *ui.gen_plate_card(child, codes, intro))
+        back = context.user_data.get("plate_back", "f:gen")
+        return await _show(update, *ui.gen_plate_card(child, codes, intro, back))
 
     if action == "gu":
         codes = suggest.decode(parts[2])[:6]
@@ -559,6 +638,7 @@ async def on_free_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     intro = db.intro_map(child["id"])
     found = suggest.parse_products(update.message.text or "")
     if found:
+        context.user_data["found"] = found
         plates = suggest.complete(ui.months_of(child), intro, found, 3)
         text, kb = ui.have(child, found, plates, intro)
         await update.message.reply_text(text, parse_mode=ParseMode.HTML, reply_markup=kb)

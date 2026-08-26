@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import asyncio
 import html.parser
+import json
 import sys
 import tempfile
 from pathlib import Path
@@ -21,7 +22,7 @@ from feed import db  # noqa: E402
 
 db.DB_PATH = Path(tempfile.mkdtemp()) / "smoke.sqlite3"
 
-from feed import catalog, growth, handlers, ui  # noqa: E402
+from feed import catalog, growth, handlers, suggest, ui  # noqa: E402
 from telegram.ext import ApplicationHandlerStop  # noqa: E402
 
 ALLOWED_TAGS = {"b", "i", "u", "s", "code", "pre", "a", "tg-spoiler", "br"}
@@ -59,13 +60,26 @@ def check_text(where: str, text: str) -> None:
         errors.append(f"{where}: не закрито {p.stack}")
 
 
+widest = ("", 0, 0)
+
+
 def check_kb(where: str, kb) -> None:
+    global widest
     if kb is None or not hasattr(kb, "inline_keyboard"):
         return
+    buttons = 0
     for row in kb.inline_keyboard:
         for btn in row:
+            buttons += 1
             if btn.callback_data and len(btn.callback_data.encode()) > 64:
                 errors.append(f"{where}: callback_data завелика: {btn.callback_data}")
+    size = len(json.dumps(kb.to_dict(), ensure_ascii=False).encode())
+    if buttons > widest[1]:
+        widest = (where, buttons, size)
+    if buttons > 100:
+        errors.append(f"{where}: {buttons} кнопок, Telegram стільки не намалює")
+    if size > 8000:
+        errors.append(f"{where}: клавіатура {size} байт, ліміт близько 8 КБ")
 
 
 class Bot:
@@ -253,6 +267,48 @@ async def main() -> None:
     assert "У тебе вже є" in bot.sent[-1], bot.sent[-1]
     print("вільний текст «гречка та індичка» -> добір тарілки")
 
+    # ── холодильник ──
+    fid = db.member(max_u.id)["family_id"]
+    await press("f:fr")
+    await press("f:frbuy")            # порожній холодильник: список покупок з нуля
+    assert ctx.user_data["buy"], "список покупок порожній"
+    await press("f:frbuyall")
+    assert db.pantry_codes(fid), "покупки не потрапили в холодильник"
+    await press("f:fradd")
+    for key in catalog.nav_keys():
+        await press(f"f:fradd:{key}")
+    was = "kabachok" in db.pantry_codes(fid)
+    await press("f:frt:kabachok")
+    assert ("kabachok" in db.pantry_codes(fid)) is not was, "тап не перемкнув продукт"
+    await press("f:frt:kabachok")
+    assert ("kabachok" in db.pantry_codes(fid)) is was, "повторний тап не повернув як було"
+    await press("f:frtext")
+    await say("морква, гречка, індичка, олія, йогурт")
+    assert {"morkva", "grechka", "indychka", "oliia", "yogurt"} <= set(db.pantry_codes(fid))
+    await say("хтозна що", )                 # має попросити ще раз
+    ctx.user_data.pop("await", None)
+    stock = db.pantry_codes(fid)
+    fr_plates = suggest.stock_plates(ui.months_of(child), db.intro_map(child["id"]), stock, 6)
+    assert fr_plates, "з повного холодильника не зібралась жодна тарілка"
+    assert all(set(pl) <= set(stock) for pl in fr_plates), "тарілка взяла те, чого немає вдома"
+    await press("f:frgen")
+    for pl in fr_plates:
+        await press(f"f:gp:{suggest.encode(pl)}")
+    await press("f:frbuy")
+    await press("f:frdel")
+    await press("f:frx:morkva")
+    assert "morkva" not in db.pantry_codes(fid)
+    await press("f:have")
+    await say("банан і кефір")
+    await press("f:frput")
+    assert "banan" in db.pantry_codes(fid), "«у мене вже є» не поклало в холодильник"
+    print(f"холодильник: {len(db.pantry_codes(fid))} продуктів, тарілок з нього {len(fr_plates)}, "
+          f"список покупок працює")
+    await press("f:frclear")
+    assert not db.pantry_codes(fid)
+    await press("f:frtext")
+    await say("гарбуз, кіноа, лосось, авокадо")
+
     # ── щоденник ──
     await press("f:diary")
     await press("f:diary:-1")
@@ -322,7 +378,8 @@ async def main() -> None:
     await handlers.on_free_text(upd, ctx)
     print("вільний текст не ламає бота")
 
-    print(f"\nекранів перевірено: {screens}, повідомлень надіслано: {len(bot.sent)}")
+    print(f"\nнайбільша клавіатура: {widest[1]} кнопок, {widest[2]} байт - {widest[0]}")
+    print(f"екранів перевірено: {screens}, повідомлень надіслано: {len(bot.sent)}")
     if errors:
         print("\nПОМИЛКИ:")
         for e in dict.fromkeys(errors):
