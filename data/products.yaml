@@ -12,6 +12,7 @@ products:
   name: Броколі
   emoji: 🥦
   group: veg
+  style: main
   from_month: 6
   choking: med
   serve:
@@ -25,6 +26,7 @@ products:
   name: Цвітна капуста
   emoji: 🥬
   group: veg
+  style: main
   from_month: 6
   choking: med
   serve:
@@ -38,6 +40,7 @@ products:
   name: Кабачок
   emoji: 🥒
   group: veg
+  style: main
   from_month: 6
   choking: low
   serve:
@@ -51,6 +54,7 @@ products:
   name: Гарбуз
   emoji: 🎃
   group: veg
+  style: both
   from_month: 6
   choking: low
   serve:
@@ -64,6 +68,7 @@ products:
   name: Морква
   emoji: 🥕
   group: veg
+  style: main
   from_month: 6
   choking: high
   serve:
@@ -77,6 +82,7 @@ products:
   name: Картопля
   emoji: 🥔
   group: veg
+  style: main
   from_month: 6
   choking: low
   serve:
@@ -90,6 +96,7 @@ products:
   name: Батат
   emoji: 🍠
   group: veg
+  style: both
   from_month: 6
   choking: low
   serve:
@@ -103,6 +110,7 @@ products:
   name: Буряк
   emoji: 🫐
   group: veg
+  style: main
   from_month: 6
   choking: low
   serve:
@@ -116,6 +124,7 @@ products:
   name: Зелений горошок
   emoji: 🟢
   group: veg
+  style: main
   from_month: 6
   choking: high
   serve:
@@ -129,6 +138,7 @@ products:
   name: Стручкова квасоля
   emoji: 🫛
   group: veg
+  style: main
   from_month: 6
   choking: med
   serve:
@@ -142,6 +152,7 @@ products:
   name: Помідор
   emoji: 🍅
   group: veg
+  style: main
   from_month: 6
   choking: high
   serve:
@@ -155,6 +166,7 @@ products:
   name: Огірок
   emoji: 🥒
   group: veg
+  style: both
   from_month: 6
   choking: high
   serve:
@@ -168,6 +180,7 @@ products:
   name: Шпинат
   emoji: 🥬
   group: veg
+  style: main
   from_month: 6
   choking: med
   serve:
@@ -181,6 +194,7 @@ products:
   name: Цибуля і часник
   emoji: 🧅
   group: veg
+  style: main
   from_month: 6
   choking: low
   serve:
@@ -196,6 +210,7 @@ products:
   name: Яблуко
   emoji: 🍎
   group: fruit
+  style: breakfast
   from_month: 6
   choking: high
   serve:
@@ -209,6 +224,7 @@ products:
   name: Груша
   emoji: 🍐
   group: fruit
+  style: breakfast
   from_month: 6
   choking: med
   serve:
@@ -222,6 +238,7 @@ products:
   name: Банан
   emoji: 🍌
   group: fruit
+  style: breakfast
   from_month: 6
   choking: low
   serve:
@@ -235,6 +252,7 @@ products:
   name: Слива
   emoji: 🫐
   group: fruit
+  style: breakfast
   from_month: 6
   choking: high
   serve:
@@ -248,6 +266,7 @@ products:
   name: Персик і нектарин
   emoji: 🍑
   group: fruit
+  style: breakfast
   from_month: 6
   choking: high
   serve:
@@ -261,6 +280,7 @@ products:
   name: Абрикос
   emoji: 🍑
   group: fruit
+  style: breakfast
   from_month: 6
   choking: high
   serve:
@@ -274,6 +294,7 @@ products:
   name: Чорниця
   emoji: 🫐
   group: fruit
+  style: breakfast
   from_month: 6
   choking: high
   serve:
@@ -287,6 +308,7 @@ products:
   name: Полуниця
   emoji: 🍓
   group: fruit
+  style: breakfast
   from_month: 6
   choking: med
   serve:
@@ -300,6 +322,7 @@ products:
   name: Малина
   emoji: 🍇
   group: fruit
+  style: breakfast
   from_month: 6
   choking: low
   serve:
@@ -313,6 +336,7 @@ products:
   name: Виноград
   emoji: 🍇
   group: fruit
+  style: breakfast
   from_month: 6
   choking: high
   serve:
@@ -326,6 +350,7 @@ products:
   name: Кавун і диня
   emoji: 🍉
   group: fruit
+  style: breakfast
   from_month: 6
   choking: med
   serve:
@@ -339,6 +364,7 @@ products:
   name: Ківі
   emoji: 🥝
   group: fruit
+  style: breakfast
   from_month: 6
   choking: med
   serve:
@@ -354,6 +380,7 @@ products:
   name: Вівсянка
   emoji: 🥣
   group: grain
+  style: breakfast
   from_month: 6
   allergen: "глютен (сліди, якщо не марковано без глютену)"
   choking: low
@@ -368,6 +395,7 @@ products:
   name: Гречка
   emoji: 🥣
   group: grain
+  style: main
   from_month: 6
   choking: low
   serve:
@@ -381,6 +409,7 @@ products:
   name: Рис
   emoji: 🍚
   group: grain
+  style: main
   from_month: 6
   choking: low
   serve:
@@ -394,6 +423,7 @@ products:
   name: Кукурудзяна крупа
   emoji: 🌽
   group: grain
+  style: main
   from_month: 6
   choking: low
   serve:
@@ -407,6 +437,7 @@ products:
   name: Пшоно
   emoji: 🥣
   group: grain
+  style: breakfast
   from_month: 7
   choking: low
   serve:
@@ -420,6 +451,7 @@ products:
   name: Кіноа
   emoji: 🥣
   group: grain
+  style: main
   from_month: 6
   choking: low
   serve:
@@ -433,6 +465,7 @@ products:
   name: Макарони
   emoji: 🍝
   group: grain
+  style: main
   from_month: 6
   allergen: "пшениця, глютен"
   choking: low
@@ -447,6 +480,7 @@ products:
   name: Хліб і тост
   emoji: 🍞
   group: grain
+  style: both
   from_month: 6
   allergen: "пшениця, глютен"
   choking: med
@@ -463,6 +497,7 @@ products:
   name: Індичка
   emoji: 🦃
   group: protein
+  style: main
   from_month: 6
   choking: med
   serve:
@@ -476,6 +511,7 @@ products:
   name: Курка
   emoji: 🍗
   group: protein
+  style: main
   from_month: 6
   choking: med
   serve:
@@ -489,6 +525,7 @@ products:
   name: Яловичина
   emoji: 🥩
   group: protein
+  style: main
   from_month: 6
   choking: med
   serve:
@@ -502,6 +539,7 @@ products:
   name: Кролик
   emoji: 🐰
   group: protein
+  style: main
   from_month: 6
   choking: med
   serve:
@@ -515,6 +553,7 @@ products:
   name: Свинина
   emoji: 🥓
   group: protein
+  style: main
   from_month: 6
   choking: med
   serve:
@@ -528,6 +567,7 @@ products:
   name: Лосось
   emoji: 🐟
   group: protein
+  style: main
   from_month: 6
   allergen: "риба"
   choking: med
@@ -542,6 +582,7 @@ products:
   name: Тріска і хек
   emoji: 🐠
   group: protein
+  style: main
   from_month: 6
   allergen: "риба"
   choking: med
@@ -556,6 +597,7 @@ products:
   name: Яйце
   emoji: 🥚
   group: protein
+  style: both
   from_month: 6
   allergen: "яйце"
   choking: low
@@ -570,6 +612,7 @@ products:
   name: Сочевиця
   emoji: 🫘
   group: protein
+  style: main
   from_month: 6
   choking: med
   serve:
@@ -583,6 +626,7 @@ products:
   name: Нут
   emoji: 🫘
   group: protein
+  style: main
   from_month: 6
   choking: high
   serve:
@@ -596,6 +640,7 @@ products:
   name: Квасоля
   emoji: 🫘
   group: protein
+  style: main
   from_month: 6
   choking: high
   serve:
@@ -609,6 +654,7 @@ products:
   name: Печінка куряча
   emoji: 🫀
   group: protein
+  style: main
   from_month: 6
   choking: low
   serve:
@@ -624,6 +670,7 @@ products:
   name: Йогурт натуральний
   emoji: 🥛
   group: dairy
+  style: breakfast
   from_month: 6
   allergen: "молоко"
   choking: low
@@ -638,6 +685,7 @@ products:
   name: Кефір
   emoji: 🥛
   group: dairy
+  style: breakfast
   from_month: 8
   allergen: "молоко"
   choking: low
@@ -652,6 +700,7 @@ products:
   name: Кисломолочний сир
   emoji: 🧀
   group: dairy
+  style: breakfast
   from_month: 6
   allergen: "молоко"
   choking: low
@@ -666,6 +715,7 @@ products:
   name: Твердий сир
   emoji: 🧀
   group: dairy
+  style: both
   from_month: 6
   allergen: "молоко"
   choking: high
@@ -680,6 +730,7 @@ products:
   name: Коровʼяче молоко
   emoji: 🥛
   group: dairy
+  style: both
   from_month: 12
   allergen: "молоко"
   choking: low
@@ -696,6 +747,7 @@ products:
   name: Олія
   emoji: 🫒
   group: fat
+  style: both
   from_month: 6
   choking: low
   serve:
@@ -709,6 +761,7 @@ products:
   name: Вершкове масло
   emoji: 🧈
   group: fat
+  style: both
   from_month: 6
   allergen: "молоко (сліди)"
   choking: low
@@ -723,6 +776,7 @@ products:
   name: Авокадо
   emoji: 🥑
   group: fat
+  style: both
   from_month: 6
   choking: low
   serve:
@@ -736,6 +790,7 @@ products:
   name: Арахісова паста
   emoji: 🥜
   group: fat
+  style: breakfast
   from_month: 6
   allergen: "арахіс"
   choking: high
@@ -750,6 +805,7 @@ products:
   name: Тахіні (кунжут)
   emoji: 🥣
   group: fat
+  style: breakfast
   from_month: 6
   allergen: "кунжут"
   choking: high
@@ -766,6 +822,7 @@ products:
   name: Вода
   emoji: 💧
   group: other
+  style: both
   from_month: 6
   choking: low
   serve:
@@ -779,6 +836,7 @@ products:
   name: Мед
   emoji: 🍯
   group: other
+  style: both
   from_month: 12
   choking: low
   serve:
@@ -792,6 +850,7 @@ products:
   name: Сіль і цукор
   emoji: 🧂
   group: other
+  style: both
   from_month: 12
   choking: low
   serve:
@@ -805,6 +864,7 @@ products:
   name: Горіхи мелені
   emoji: 🌰
   group: fat
+  style: breakfast
   from_month: 6
   allergen: "горіхи деревні"
   choking: high

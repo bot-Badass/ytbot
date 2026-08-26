@@ -229,6 +229,30 @@ async def main() -> None:
     await press("f:save:snack")
     print(f"тарілок {len(catalog.plates())}, рецептів {len(catalog.recipes())} перевірено")
 
+    # ── генератор варіантів і «у мене вже є» ──
+    from feed import suggest
+    await press("f:gen")
+    gen = suggest.generate(ui.months_of(child), db.intro_map(child["id"]), 6)
+    assert gen, "генератор не зібрав жодної тарілки"
+    for pl in gen:
+        await press(f"f:gp:{suggest.encode(pl)}")
+    await press(f"f:gu:{suggest.encode(gen[0])}")
+    await press("f:save:dinner")
+    await press("f:have")
+    await say("морква і курка")
+    await say("хтозна що")                       # має попросити ще раз
+    await say("яблуко, йогурт")
+    # найдовша можлива callback_data для згенерованої тарілки
+    longest = max((suggest.encode(pl) for pl in suggest.generate(24, {}, 120)), key=len)
+    payload = len(f"f:gu:{longest}".encode())
+    assert payload <= 64, f"callback_data {payload} байт: {longest}"
+    print(f"генератор: {len(gen)} варіантів, найдовша callback_data {payload}/64 байт")
+    # вільний текст із продуктами веде в добір, а не на головну
+    upd = Update(bot, max_u, text="у нас є гречка та індичка")
+    await handlers.on_free_text(upd, ctx)
+    assert "У тебе вже є" in bot.sent[-1], bot.sent[-1]
+    print("вільний текст «гречка та індичка» -> добір тарілки")
+
     # ── щоденник ──
     await press("f:diary")
     await press("f:diary:-1")

@@ -7,7 +7,7 @@ from zoneinfo import ZoneInfo
 from telegram import InlineKeyboardButton as B
 from telegram import InlineKeyboardMarkup as M
 
-from . import catalog, db, growth
+from . import catalog, db, growth, suggest
 
 TZ = ZoneInfo("Europe/Kyiv")
 
@@ -323,10 +323,78 @@ def plates_screen(child, band: str | None = None) -> tuple[str, M]:
     lines = [f"🍲 <b>Ідеї тарілок · {catalog.band_title(band)}</b>", "",
              "Принцип: рослинне + вуглевод + білок + жир. Жир додаємо завжди - без нього "
              "не засвояться вітаміни A, D, E, K."]
+    lines += ["", f"Готових ідей: {len(items)}. Якщо мало - «Ще варіанти» збирає нові "
+              "з продуктів, дозволених за віком."]
     rows = [[B(p["title"], callback_data=f"f:pl:{p['id']}")] for p in items]
+    rows.append([B("🎲 Ще варіанти", callback_data="f:gen"),
+                 B("✍️ У мене вже є…", callback_data="f:have")])
     rows.append([B(("• " if b == band else "") + t, callback_data=f"f:plates:{b}")
                  for b, _, _, t in catalog.AGE_BANDS])
     rows.append([B("🏠 Головна", callback_data="f:home")])
+    return "\n".join(lines), M(rows)
+
+
+def _plate_button(codes: list[str], prefix: str) -> B:
+    return B(" · ".join(catalog.product(c)["name"] for c in codes),
+             callback_data=f"{prefix}:{suggest.encode(codes)}")
+
+
+def generated(child, plates: list[list[str]]) -> tuple[str, M]:
+    lines = ["🎲 <b>Свіжі варіанти</b>",
+             f"{catalog.band_title(catalog.band_for(months_of(child)))} · зібрано за віком, "
+             "переважно з уже введеного, плюс потроху нового.", ""]
+    if not plates:
+        lines.append("Не вдалось зібрати тарілку. Схоже, зарано за віком або надто багато "
+                     "продуктів у статусі «уникаємо».")
+    else:
+        lines.append("Тисни варіант, щоб побачити, як подавати кожен продукт.")
+    rows = [[_plate_button(pl, "f:gp")] for pl in plates]
+    rows.append([B("🎲 Ще", callback_data="f:gen"), B("✍️ У мене вже є…", callback_data="f:have")])
+    rows.append([B("‹ Тарілки", callback_data="f:plates"), B("🏠 Головна", callback_data="f:home")])
+    return "\n".join(lines), M(rows)
+
+
+def gen_plate_card(child, codes: list[str], intro: dict, back: str = "f:gen") -> tuple[str, M]:
+    months = months_of(child)
+    lines = ["🍲 <b>" + esc(" · ".join(catalog.product(c)["name"] for c in codes)) + "</b>", ""]
+    for code in codes:
+        prod = catalog.product(code)
+        lines.append(f"{mark(code, intro, months)} {prod['emoji']} <b>{esc(prod['name'])}</b>")
+        lines.append(f"   {esc(catalog.serving(code, months))}")
+    fresh = [c for c in codes if c not in intro]
+    lines += ["", f"<i>{esc(balance_hint(codes))}</i>"]
+    if len(fresh) == 1:
+        lines.append(f"<i>Нове тут одне: {catalog.label(fresh[0])}. Так і треба - "
+                     "один новий продукт за раз.</i>")
+    elif len(fresh) > 1:
+        lines.append("<i>⚠️ Тут більше одного нового продукту. Краще ввести їх різними днями, "
+                     "інакше не зрозуміло, на що була реакція.</i>")
+    rows = [[B("🍽 Подали цю тарілку", callback_data=f"f:gu:{suggest.encode(codes)}")],
+            [B("🎲 Інші варіанти", callback_data=back),
+             B("‹ Тарілки", callback_data="f:plates")],
+            [B("🏠 Головна", callback_data="f:home")]]
+    return "\n".join(lines), M(rows)
+
+
+HAVE_PROMPT = ("✍️ Напиши, що вже є під рукою - одним повідомленням, через кому.\n\n"
+               "Наприклад: <code>морква і курка</code> або <code>яблуко, йогурт</code>.\n"
+               "Доберу те, чого не вистачає до збалансованої тарілки.")
+
+
+def have(child, found: list[str], plates: list[list[str]], intro: dict) -> tuple[str, M]:
+    lines = ["✍️ <b>У тебе вже є</b>", " · ".join(catalog.label(c) for c in found)]
+    need = suggest.missing_slots(found)
+    if need:
+        lines += ["", "Не вистачає: " + ", ".join(suggest.SLOT_LABEL[s] for s in need),
+                  "", "Готові варіанти:"]
+    else:
+        lines += ["", "Тарілка вже збалансована: є рослинне, вуглевод, білок і жир."]
+    rows = [[_plate_button(pl, "f:gp")] for pl in plates]
+    if not need:
+        rows = [[B("🍽 Подали цю тарілку", callback_data=f"f:gu:{suggest.encode(found)}")]]
+    rows.append([B("✍️ Інший набір", callback_data="f:have"),
+                 B("🎲 Ще варіанти", callback_data="f:gen")])
+    rows.append([B("‹ Тарілки", callback_data="f:plates"), B("🏠 Головна", callback_data="f:home")])
     return "\n".join(lines), M(rows)
 
 

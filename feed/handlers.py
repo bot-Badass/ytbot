@@ -13,7 +13,7 @@ from telegram.constants import ParseMode
 from telegram.error import TelegramError
 from telegram.ext import ApplicationHandlerStop, ContextTypes
 
-from . import catalog, db, growth, ui
+from . import catalog, db, growth, suggest, ui
 
 log = logging.getLogger("feed")
 
@@ -236,6 +236,21 @@ async def on_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         await update.message.reply_text(t, parse_mode=ParseMode.HTML, reply_markup=kb)
         raise ApplicationHandlerStop
 
+    if kind == "have":
+        context.user_data.pop("await", None)
+        found = suggest.parse_products(text)
+        if not found:
+            await update.message.reply_text(
+                "Не впізнав жодного продукту. Напиши простіше, наприклад: морква і курка.")
+            context.user_data["await"] = {"k": "have"}
+            raise ApplicationHandlerStop
+        months = ui.months_of(child)
+        intro = db.intro_map(child["id"])
+        plates = suggest.complete(months, intro, found, 3)
+        t_, kb = ui.have(child, found, plates, intro)
+        await update.message.reply_text(t_, parse_mode=ParseMode.HTML, reply_markup=kb)
+        raise ApplicationHandlerStop
+
     if kind == "mnote":
         db.run("UPDATE meal SET note=? WHERE id=? AND child_id=?",
                (text[:300], pending["id"], child["id"]))
@@ -441,6 +456,25 @@ async def on_button(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         context.user_data["draft"] = list(plate["items"])[:6]
         return await _show(update, *ui.pick_kind(context.user_data["draft"]))
 
+    if action == "gen":
+        plates = suggest.generate(ui.months_of(child), intro, 6)
+        return await _show(update, *ui.generated(child, plates))
+
+    if action == "gp":
+        codes = suggest.decode(parts[2])
+        if not codes:
+            return await _show(update, *ui.plates_screen(child))
+        return await _show(update, *ui.gen_plate_card(child, codes, intro))
+
+    if action == "gu":
+        codes = suggest.decode(parts[2])[:6]
+        context.user_data["draft"] = codes
+        return await _show(update, *ui.pick_kind(codes))
+
+    if action == "have":
+        context.user_data["await"] = {"k": "have"}
+        return await _show(update, ui.HAVE_PROMPT)
+
     if action == "rec":
         return await _show(update, *ui.recipes_screen(child))
 
@@ -522,8 +556,16 @@ async def on_free_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     if not got:
         return
     _, child = got
-    text, kb = ui.home(child, db.intro_map(child["id"]))
+    intro = db.intro_map(child["id"])
+    found = suggest.parse_products(update.message.text or "")
+    if found:
+        plates = suggest.complete(ui.months_of(child), intro, found, 3)
+        text, kb = ui.have(child, found, plates, intro)
+        await update.message.reply_text(text, parse_mode=ParseMode.HTML, reply_markup=kb)
+        return
+    text, kb = ui.home(child, intro)
     await update.message.reply_text(
-        "Тут керування кнопками. Посилання на YouTube теж працює, як раніше.",
+        "Керування кнопками. Ще можна написати, що є під рукою - наприклад "
+        "«морква і курка» - і я доберу решту тарілки. Посилання на YouTube працює як раніше.",
         reply_markup=ReplyKeyboardRemove())
     await update.message.reply_text(text, parse_mode=ParseMode.HTML, reply_markup=kb)
