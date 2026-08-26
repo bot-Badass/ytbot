@@ -65,6 +65,11 @@ COOKIES_FILE = os.environ.get("COOKIES_FILE", "").strip()
 ALLOWED_USERS = {
     int(x) for x in re.split(r"[,\s]+", os.environ.get("ALLOWED_USERS", "")) if x.strip().isdigit()
 }
+# Прикорм відкритий усім, качалка з YouTube - ні: вона їсть диск і трафік VPS.
+# Порожньо = діє ALLOWED_USERS (тобто теж усім).
+YT_USERS = {
+    int(x) for x in re.split(r"[,\s]+", os.environ.get("YT_USERS", "")) if x.strip().isdigit()
+} or ALLOWED_USERS
 WORK_DIR = Path(os.environ.get("WORK_DIR", "/tmp/ytbot"))
 YTDLP = shutil.which("yt-dlp") or str(Path.home() / ".local/bin/yt-dlp")
 
@@ -320,10 +325,10 @@ def make_thumb(path: Path, outdir: Path, duration: int) -> Path | None:
 
 
 def allowed(update: Update) -> bool:
-    if not ALLOWED_USERS:
+    if not YT_USERS:
         return True
     user = update.effective_user
-    return bool(user and user.id in ALLOWED_USERS)
+    return bool(user and user.id in YT_USERS)
 
 
 async def cmd_yt(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -537,7 +542,8 @@ def main() -> None:
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, feed.on_text), group=-1)
 
     # group 0: прикорм і завантаження з YouTube
-    app.add_handler(CommandHandler(["start", "help"], feed.cmd_start))
+    app.add_handler(CommandHandler("start", feed.cmd_start))
+    app.add_handler(CommandHandler("help", feed.cmd_help))
     app.add_handler(CommandHandler("id", feed.cmd_id))
     app.add_handler(CommandHandler("yt", cmd_yt))
     app.add_handler(CallbackQueryHandler(feed.on_button, pattern=r"^f:"))

@@ -91,6 +91,18 @@ CREATE TABLE IF NOT EXISTS nudge (
     done        INTEGER NOT NULL DEFAULT 0
 );
 CREATE INDEX IF NOT EXISTS nudge_due ON nudge(done, due_ts);
+CREATE TABLE IF NOT EXISTS subscriber (
+    user_id     INTEGER PRIMARY KEY,
+    username    TEXT NOT NULL DEFAULT '',
+    name        TEXT NOT NULL DEFAULT '',
+    lang        TEXT NOT NULL DEFAULT '',
+    source      TEXT NOT NULL DEFAULT '',   -- payload з deep-link /start?start=...
+    first_seen  INTEGER NOT NULL,
+    last_seen   INTEGER NOT NULL,
+    hits        INTEGER NOT NULL DEFAULT 1,
+    blocked     INTEGER NOT NULL DEFAULT 0  -- бот заблокований користувачем
+);
+CREATE INDEX IF NOT EXISTS subscriber_seen ON subscriber(last_seen);
 CREATE TABLE IF NOT EXISTS pantry (
     family_id   INTEGER NOT NULL REFERENCES family(id),
     code        TEXT NOT NULL,
@@ -164,8 +176,13 @@ def new_invite(family_id: int) -> str:
     return code
 
 
+INVITE_TTL = 24 * 3600
+
+
 def use_invite(code: str, user_id: int, name: str) -> int | None:
-    row = q1("SELECT * FROM invite WHERE code=? AND used_by IS NULL", (code.strip().upper(),))
+    """Код одноразовий і живе добу: бот публічний, а код це ключ до щоденника дитини."""
+    row = q1("SELECT * FROM invite WHERE code=? AND used_by IS NULL AND created_at>=?",
+             (code.strip().upper(), now() - INVITE_TTL))
     if not row:
         return None
     join_family(user_id, row["family_id"], name)
@@ -355,3 +372,77 @@ def pantry_clear(family_id: int) -> None:
 def pantry_since(family_id: int, code: str) -> int:
     row = q1("SELECT added_ts FROM pantry WHERE family_id=? AND code=?", (family_id, code))
     return row["added_ts"] if row else 0
+
+
+# ─────────────────────── база підписників ───────────────────────
+
+
+def touch_subscriber(user, source: str = "") -> bool:
+    """Фіксує кожного, хто торкнувся бота. True якщо людина тут уперше.
+
+    Родина і дитина створюються не завжди, а знати, скільки людей зайшло і кому
+    можна написати про оновлення, треба з першого дня.
+    """
+    if user is None or getattr(user, "is_bot", False):
+        return False
+    uid = int(user.id)
+    username = (getattr(user, "username", "") or "")[:64]
+    name = ((getattr(user, "first_name", "") or "")
+            + " " + (getattr(user, "last_name", "") or "")).strip()[:80]
+    lang = (getattr(user, "language_code", "") or "")[:8]
+    row = q1("SELECT user_id FROM subscriber WHERE user_id=?", (uid,))
+    if row:
+        run("UPDATE subscriber SET username=?, name=?, lang=?, last_seen=?, hits=hits+1, "
+            "blocked=0, source=CASE WHEN source='' THEN ? ELSE source END WHERE user_id=?",
+            (username, name, lang, now(), source[:64], uid))
+        return False
+    run("INSERT INTO subscriber(user_id, username, name, lang, source, first_seen, last_seen) "
+        "VALUES(?,?,?,?,?,?,?)", (uid, username, name, lang, source[:64], now(), now()))
+    return True
+
+
+def subscribers(active_only: bool = True) -> list[sqlite3.Row]:
+    sql = "SELECT * FROM subscriber"
+    if active_only:
+        sql += " WHERE blocked=0"
+    return q(sql + " ORDER BY first_seen")
+
+
+def mark_blocked(user_id: int, blocked: bool = True) -> None:
+    run("UPDATE subscriber SET blocked=? WHERE user_id=?", (1 if blocked else 0, user_id))
+
+
+def subscriber_stats() -> dict:
+    total = q1("SELECT COUNT(*) c FROM subscriber")["c"]
+    blocked = q1("SELECT COUNT(*) c FROM subscriber WHERE blocked=1")["c"]
+    families = q1("SELECT COUNT(*) c FROM family")["c"]
+    children = q1("SELECT COUNT(*) c FROM child")["c"]
+    with_profile = q1("SELECT COUNT(DISTINCT user_id) c FROM member")["c"]
+    day = q1("SELECT COUNT(*) c FROM subscriber WHERE last_seen>=?", (now() - 86400,))["c"]
+    week = q1("SELECT COUNT(*) c FROM subscriber WHERE last_seen>=?", (now() - 7 * 86400,))["c"]
+    meals = q1("SELECT COUNT(*) c FROM meal")["c"]
+    return {"total": total, "blocked": blocked, "active": total - blocked,
+            "families": families, "children": children, "with_profile": with_profile,
+            "day": day, "week": week, "meals": meals}
+
+
+def wipe_family(family_id: int) -> None:
+    """Видаляє родину і все, що з нею повʼязано. Підписник лишається в базі.
+
+    Кнопка в налаштуваннях, тому відновлення немає: людина просила видалити дані,
+    а не сховати їх.
+    """
+    kids = [r["id"] for r in q("SELECT id FROM child WHERE family_id=?", (family_id,))]
+    for cid in kids:
+        run("DELETE FROM meal_item WHERE meal_id IN (SELECT id FROM meal WHERE child_id=?)", (cid,))
+        run("DELETE FROM meal WHERE child_id=?", (cid,))
+        run("DELETE FROM intro WHERE child_id=?", (cid,))
+        run("DELETE FROM reaction WHERE child_id=?", (cid,))
+        run("DELETE FROM measure WHERE child_id=?", (cid,))
+        run("DELETE FROM nudge WHERE child_id=?", (cid,))
+    run("DELETE FROM pantry WHERE family_id=?", (family_id,))
+    run("DELETE FROM kv WHERE family_id=?", (family_id,))
+    run("DELETE FROM invite WHERE family_id=?", (family_id,))
+    run("DELETE FROM child WHERE family_id=?", (family_id,))
+    run("DELETE FROM member WHERE family_id=?", (family_id,))
+    run("DELETE FROM family WHERE id=?", (family_id,))

@@ -141,8 +141,9 @@ class Update:
 
 
 class Context:
-    def __init__(self, bot):
+    def __init__(self, bot, args=None):
         self.bot = bot
+        self.args = args or []
         self.user_data: dict = {}
 
 
@@ -162,8 +163,16 @@ async def main() -> None:
         except ApplicationHandlerStop:
             pass
 
-    # ── онбординг ──
+    # ── інструкція доступна ще до профілю ──
     await handlers.cmd_start(Update(bot, max_u, text="/start"), ctx)
+    await press("f:guide")
+    for key in ui.GUIDE_ORDER:
+        await press(f"f:guide:{key}")
+    await handlers.cmd_help(Update(bot, max_u, text="/help"), ctx)
+    assert db.q1("SELECT user_id FROM subscriber WHERE user_id=?", (max_u.id,)), \
+        "підписник не потрапив у базу"
+
+    # ── онбординг ──
     await press("f:setup")
     await say("Аліса")
     await say("15.01.2026")
@@ -371,6 +380,27 @@ async def main() -> None:
     await say("01.02.2026")
     assert db.child_of(max_u.id)["birth_date"] == "2026-02-01"
     await press("f:home")
+
+    # ── база підписників ──
+    s = db.subscriber_stats()
+    assert s["total"] >= 2 and s["with_profile"] >= 2, s
+    assert db.q1("SELECT hits FROM subscriber WHERE user_id=?", (max_u.id,))["hits"] > 10
+    print(f"підписники: {s['total']} у базі, {s['with_profile']} з профілем, "
+          f"родин {s['families']}")
+
+    # ── приватність і видалення даних (у кінці: стирає родину) ──
+    await press("f:set")
+    await press("f:privacy")
+    await press("f:wipe")
+    assert db.child_of(max_u.id), "підтвердження не мало нічого видаляти"
+    await press("f:wipe:yes")
+    assert not db.child_of(max_u.id), "дані не видалились"
+    assert not db.q1("SELECT 1 FROM meal"), "прийоми їжі лишились після видалення"
+    assert not db.q1("SELECT 1 FROM pantry"), "холодильник лишився після видалення"
+    assert db.q1("SELECT 1 FROM subscriber WHERE user_id=?", (max_u.id,)), \
+        "підписник має лишатись у базі після видалення даних родини"
+    await handlers.cmd_start(Update(bot, max_u, text="/start"), ctx)
+    print("видалення даних: родина стерта, підписник у базі, бот пропонує почати наново")
 
     # ── вільний текст ──
     upd = Update(bot, max_u, text="привіт")

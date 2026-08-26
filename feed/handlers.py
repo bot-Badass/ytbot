@@ -41,6 +41,14 @@ async def _show(update: Update, text: str, kb: M | None = None) -> None:
                             disable_web_page_preview=True)
 
 
+def track(update: Update, source: str = "") -> None:
+    """Кожен, хто торкнувся бота, потрапляє в базу підписників."""
+    try:
+        db.touch_subscriber(update.effective_user, source)
+    except Exception as exc:          # база підписників не має ламати відповідь
+        log.warning("не вдалось записати підписника: %s", exc)
+
+
 def _who(update: Update) -> str:
     u = update.effective_user
     return (u.first_name or u.username or str(u.id)) if u else "?"
@@ -77,10 +85,13 @@ def _parse_date(text: str) -> date | None:
 
 
 ONBOARD_TEXT = (
-    "👋 Це помічник з прикорму.\n\n"
-    "Веде щоденник прийомів їжі, тримає бібліотеку продуктів із безпечною подачею за віком, "
-    "фіксує реакції, рахує перцентилі зростання за ВООЗ і нагадує про правило трьох днів.\n\n"
-    "Почнемо з профілю дитини."
+    "👋 <b>Це помічник з прикорму.</b>\n\n"
+    "Веде щоденник їжі, тримає бібліотеку продуктів із безпечною подачею за віком, "
+    "фіксує реакції, рахує зростання за таблицями ВООЗ і нагадує про правило трьох днів.\n\n"
+    "Ще складає тарілки з того, що є в холодильнику, і рахує покупки на тиждень.\n\n"
+    "Безкоштовно, без підписки і реклами. Налаштування займає хвилину: "
+    "імʼя дитини, дата народження, стать.\n\n"
+    "<i>Довідка на основі рекомендацій ВООЗ, AAP і EFSA. Не замінює педіатра.</i>"
 )
 
 PRIVATE_TEXT = (
@@ -104,7 +115,8 @@ def may_create(update: Update) -> bool:
 async def onboard(update: Update) -> None:
     if may_create(update):
         kb = M([[B("👶 Створити профіль дитини", callback_data="f:setup")],
-                [B("🔗 У мене є код запрошення", callback_data="f:joinask")]])
+                [B("🔗 У мене є код запрошення", callback_data="f:joinask")],
+                [B("ℹ️ Що вміє бот", callback_data="f:guide")]])
         await _show(update, ONBOARD_TEXT, kb)
         return
     kb = M([[B("🔗 У мене є код запрошення", callback_data="f:joinask")]])
@@ -130,6 +142,7 @@ async def ensure(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    track(update, " ".join(context.args or [])[:64])
     context.user_data.pop("await", None)
     got = await ensure(update, context)
     if not got:
@@ -137,6 +150,11 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     _, child = got
     text, kb = ui.home(child, db.intro_map(child["id"]))
     await _show(update, text, kb)
+
+
+async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    track(update, "help")
+    await _show(update, *ui.guide("start"))
 
 
 async def cmd_id(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -152,6 +170,7 @@ async def on_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     pending = context.user_data.get("await")
     if not pending:
         return
+    track(update)
     text = (update.message.text or "").strip()
     kind = pending["k"]
     user = update.effective_user
@@ -198,7 +217,8 @@ async def on_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         family_id = db.use_invite(text, user.id, _who(update))
         context.user_data.pop("await", None)
         if not family_id:
-            await update.message.reply_text("Код не підійшов. Перевір або попроси новий.")
+            await update.message.reply_text(
+                "Код не підійшов. Він одноразовий і діє добу - попроси новий.")
             raise ApplicationHandlerStop
         child = db.child_of(user.id)
         if not child:
@@ -336,6 +356,7 @@ async def _record_and_continue(update: Update, context: ContextTypes.DEFAULT_TYP
 
 
 async def on_button(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    track(update)
     query = update.callback_query
     data = query.data
     parts = data.split(":")
@@ -351,6 +372,10 @@ async def on_button(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         db.member(user.id) or db.create_family(user.id, _who(update))
         await _show(update, "Як звати дитину?")
         return
+    if action == "guide":
+        await query.answer()
+        return await _show(update, *ui.guide(parts[2] if len(parts) > 2 else "start"))
+
     if action == "joinask":
         await query.answer()
         context.user_data["await"] = {"k": "join"}
@@ -605,8 +630,23 @@ async def on_button(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         text = ("🔗 <b>Код запрошення</b>\n\n"
                 f"<code>{code}</code>\n\n"
                 f"Перешли цей код другому дорослому. Хай відкриє бота, натисне "
-                f"«У мене є код запрошення» і надішле його. Код одноразовий.")
+                f"«У мене є код запрошення» і надішле його.\n\n"
+                f"Код одноразовий і діє добу. Не викладай його публічно: "
+                f"той, хто його введе, побачить щоденник дитини.")
         return await _show(update, text, M([[B("‹ Налаштування", callback_data="f:set")]]))
+
+    if action == "privacy":
+        return await _show(update, *ui.privacy(child))
+
+    if action == "wipe":
+        if len(parts) == 2:
+            return await _show(update, *ui.wipe_confirm(child))
+        db.wipe_family(member["family_id"])
+        context.user_data.clear()
+        log.info("родина %s видалила свої дані", member["family_id"])
+        return await _show(update,
+                           "🗑 Дані видалено. Профіль, щоденник, реакції, виміри і "
+                           "холодильник стерті.\n\nЯкщо захочеш почати наново - /start.")
 
     if action == "editbirth":
         context.user_data["await"] = {"k": "editbirth"}
@@ -629,6 +669,7 @@ async def on_button(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
 async def on_free_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Будь-який інший текст: показуємо головну, а не мовчимо."""
+    track(update)
     if not db.member(update.effective_user.id) and not may_create(update):
         return
     got = await ensure(update, context)
