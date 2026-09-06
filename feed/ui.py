@@ -23,8 +23,22 @@ def local(ts: int) -> datetime:
 
 def day_bounds(offset: int = 0) -> tuple[int, int, date]:
     today = datetime.now(TZ).date() + timedelta(days=offset)
-    start = datetime.combine(today, datetime.min.time(), TZ)
-    return int(start.timestamp()), int((start + timedelta(days=1)).timestamp()), today
+    return bounds_of(today)
+
+
+def bounds_of(day: date) -> tuple[int, int, date]:
+    start = datetime.combine(day, datetime.min.time(), TZ)
+    return int(start.timestamp()), int((start + timedelta(days=1)).timestamp()), day
+
+
+def day_label(day: date | None) -> str:
+    """Як назвати дату прийому їжі: сьогодні, вчора або число."""
+    today = datetime.now(TZ).date()
+    if day is None or day == today:
+        return "сьогодні"
+    if day == today - timedelta(days=1):
+        return "вчора"
+    return day.strftime("%d.%m.%Y")
 
 
 def birth_date(child) -> date:
@@ -47,6 +61,22 @@ def sub_tabs(key: str, prefix: str) -> list[list[B]]:
         return []
     return _rows([B(("• " if s == sub else "") + f"{catalog.SUBGROUPS[s][0]} {catalog.SUBGROUPS[s][1].split()[0]}",
                     callback_data=f"{prefix}:{group}.{s}") for s in subs], 4)
+
+
+def shelf_items(key: str, show_rare: bool) -> list[dict]:
+    """Продукти полиці в порядку показу. Екзотика ховається, поки її не попросили."""
+    return sorted(catalog.by_key(key, rare=show_rare),
+                  key=lambda p: (p["from_month"], p["name"]))
+
+
+def rare_toggle(key: str, where: str, show_rare: bool) -> list[B]:
+    """Кнопка «показати/сховати рідкісні». where - куди повернутись після перемикання."""
+    hidden = catalog.rare_count(key)
+    if not hidden:
+        return []
+    if show_rare:
+        return [B("🙈 Сховати рідкісні", callback_data=f"f:rare:{where}")]
+    return [B(f"🥬 Показати рідкісні · {hidden}", callback_data=f"f:rare:{where}")]
 
 
 def mark(code: str, intro: dict, months: int) -> str:
@@ -87,7 +117,8 @@ def home(child, intro: dict) -> tuple[str, M]:
     fridge = f" · {stock}" if stock else ""
     kb = M([
         [B("🍽 Записати прийом їжі", callback_data="f:new")],
-        [B(f"🧊 Холодильник{fridge}", callback_data="f:fr"), B("🍲 Тарілки", callback_data="f:plates")],
+        [B(f"🧊 Холодильник{fridge}", callback_data="f:fr"),
+         B("🎯 Що ввести далі", callback_data="f:next")],
         [B("🥕 Продукти", callback_data="f:lib"), B("👨‍🍳 Рецепти", callback_data="f:rec")],
         [B("📔 Щоденник", callback_data="f:diary"), B("📈 Зростання", callback_data="f:grow")],
         [B("ℹ️ Інструкція", callback_data="f:guide"), B("⚙️ Налаштування", callback_data="f:set")],
@@ -107,7 +138,8 @@ def balance_hint(codes: list[str]) -> str:
     return "Не вистачає: " + ", ".join(suggest.SLOT_LABEL[s] for s in missing)
 
 
-def draft(child, codes: list[str], intro: dict, group: str | None = None) -> tuple[str, M]:
+def draft(child, codes: list[str], intro: dict, group: str | None = None,
+          show_rare: bool = False) -> tuple[str, M]:
     months = months_of(child)
     head = ["🍽 <b>Нова тарілка</b>", ""]
     if codes:
@@ -115,7 +147,20 @@ def draft(child, codes: list[str], intro: dict, group: str | None = None) -> tup
     head.append(balance_hint(codes))
 
     rows: list[list[B]] = []
-    if group == "fav":
+    if group == "fridge":
+        stock = db.pantry_codes(child["family_id"])
+        head.append("")
+        if stock:
+            head.append("🧊 <b>З холодильника</b>")
+            ordered = [c for key in catalog.nav_keys() for c in stock
+                       if catalog.key_of(c) == key]
+            rows += _rows([B(("✔️ " if c in codes else "") + catalog.label(c),
+                             callback_data=f"f:sel:{c}") for c in ordered])
+        else:
+            head.append("🧊 Холодильник порожній. Склади туди те, що є вдома - "
+                        "і цей екран показуватиме тільки його.")
+            rows.append([B("🧊 Наповнити холодильник", callback_data="f:fr")])
+    elif group == "fav":
         fav = db.recent_codes(child["id"], 8)
         head.append("")
         head.append("⭐ <b>Часте</b>" if fav else "⭐ Часте зʼявиться після перших записів.")
@@ -127,15 +172,19 @@ def draft(child, codes: list[str], intro: dict, group: str | None = None) -> tup
         head.append("")
         head.append(f"{emoji} <b>{title}</b>")
         rows += sub_tabs(group, "f:grp")
-        items = sorted(catalog.by_key(group), key=lambda p: (p["from_month"], p["name"]))
+        items = shelf_items(group, show_rare)
         rows += _rows([
             B(("✔️ " if p["code"] in codes else mark(p["code"], intro, months) + " ")
               + catalog.name(p["code"]),
               callback_data=f"f:sel:{p['code']}")
             for p in items
         ])
+        toggle = rare_toggle(group, f"grp:{group}", show_rare)
+        if toggle:
+            rows.append(toggle)
 
-    nav = [B("⭐ Часте", callback_data="f:grp:fav")]
+    nav = [B("🧊 З холодильника", callback_data="f:grp:fridge"),
+           B("⭐ Часте", callback_data="f:grp:fav")]
     nav += [B(f"{catalog.GROUPS[g][0]} {catalog.GROUPS[g][1]}",
               callback_data=f"f:grp:{g}.{catalog.SUBS_OF[g][0]}" if g in catalog.SUBS_OF
               else f"f:grp:{g}")
@@ -150,25 +199,41 @@ def draft(child, codes: list[str], intro: dict, group: str | None = None) -> tup
     return "\n".join(head), M(rows)
 
 
-def pick_kind(codes: list[str]) -> tuple[str, M]:
+def pick_kind(codes: list[str], day: date | None = None) -> tuple[str, M]:
     now_h = datetime.now(TZ).hour
     guess = "breakfast" if now_h < 11 else "lunch" if now_h < 15 else "dinner" if now_h < 21 else "snack"
+    today = datetime.now(TZ).date()
     text = ("Який це прийом їжі?\n\nУ тарілці: "
-            + ", ".join(catalog.label(c) for c in codes))
+            + ", ".join(catalog.label(c) for c in codes)
+            + f"\nКоли: <b>{day_label(day)}</b>")
     rows = _rows([B(("• " if k == guess else "") + name, callback_data=f"f:save:{k}")
                   for k, name in catalog.MEAL_KINDS])
+    picked = day or today
+    rows.append([B(("• " if picked == today else "") + "Сьогодні", callback_data="f:day:0"),
+                 B(("• " if picked == today - timedelta(days=1) else "") + "Вчора",
+                   callback_data="f:day:1"),
+                 B("📅 Інша дата", callback_data="f:day:ask")])
     rows.append([B("‹ Назад", callback_data="f:new_keep")])
     return text, M(rows)
+
+
+MEAL_DATE_PROMPT = ("📅 Якого числа це було? Формат: <code>03.09.2026</code>\n\n"
+                    "Можна записати заднім числом за будь-який день цього року.")
 
 
 def meal_record(child, codes: list[str], kind: str, ts: int | None = None) -> str:
     """Постійний запис у стрічці чату. Без кнопок - його ніщо не перезапише."""
     ts = ts or db.now()
-    day_from, day_to, _ = day_bounds()
-    todays = db.meals_between(child["id"], day_from, day_to)
+    day = local(ts).date()
+    day_from, day_to, _ = bounds_of(day)
+    same_day = db.meals_between(child["id"], day_from, day_to)
     line = " · ".join(catalog.label(c) for c in codes)
-    head = f"✅ <b>{catalog.MEAL_LABEL[kind]}</b> · {local(ts).strftime('%H:%M')}"
-    tail = f"\n\n<i>Сьогодні це {len(todays)}-й прийом їжі.</i>" if len(todays) > 1 else ""
+    when = local(ts).strftime("%H:%M")
+    if day != datetime.now(TZ).date():
+        when = local(ts).strftime("%d.%m, %H:%M")
+    head = f"✅ <b>{catalog.MEAL_LABEL[kind]}</b> · {when}"
+    word = "Сьогодні" if day == datetime.now(TZ).date() else "Того дня"
+    tail = f"\n\n<i>{word} це {len(same_day)}-й прийом їжі.</i>" if len(same_day) > 1 else ""
     return f"{head}\n{line}{tail}"
 
 
@@ -195,10 +260,11 @@ def after_save(child, intro: dict, fresh: list[str]) -> tuple[str, M]:
 # ─────────────────────────── бібліотека ───────────────────────────
 
 
-def library(child, intro: dict) -> tuple[str, M]:
+def library(child, intro: dict, show_rare: bool = False) -> tuple[str, M]:
     months = months_of(child)
+    shown = sum(len(catalog.by_key(k, rare=show_rare)) for k in catalog.nav_keys())
     lines = ["🥕 <b>Продукти</b>",
-             f"Введено {len(intro)} з {len(catalog.products())}.",
+             f"Введено {len(intro)} з {shown}.",
              "",
              "✅ введено · 🆕 ще ні · 👀 під наглядом · ⛔ уникаємо · ⏳ зарано за віком",
              f"{catalog.ALLERGEN_MARK} алерген: вводити рано і потім регулярно",
@@ -206,25 +272,33 @@ def library(child, intro: dict) -> tuple[str, M]:
              "<i>Мʼясо, риба, яйця і бобові лежать на різних полицях, але для балансу "
              "тарілки це один білок.</i>"]
     rows = []
+    hidden = 0
     for key in catalog.nav_keys():
         emoji, title = catalog.key_title(key)
-        items = catalog.by_key(key)
+        items = catalog.by_key(key, rare=show_rare)
+        hidden += catalog.rare_count(key)
         done = sum(1 for p in items if p["code"] in intro)
         rows.append([B(f"{emoji} {title} · {done}/{len(items)}", callback_data=f"f:lg:{key}")])
+    if hidden:
+        rows.append([B("🙈 Сховати рідкісні" if show_rare else f"🥬 Показати рідкісні · {hidden}",
+                       callback_data="f:rare:lib")])
     rows.append([B("🏠 Головна", callback_data="f:home")])
     return "\n".join(lines), M(rows)
 
 
-def group_list(child, group: str, intro: dict) -> tuple[str, M]:
+def group_list(child, group: str, intro: dict, show_rare: bool = False) -> tuple[str, M]:
     months = months_of(child)
     group = catalog.default_key(group)
     emoji, title = catalog.key_title(group)
-    items = sorted(catalog.by_key(group), key=lambda p: (p["from_month"], p["name"]))
+    items = shelf_items(group, show_rare)
     lines = [f"{emoji} <b>{title}</b>",
              f"Вік {child['name']}: {growth.age_text(birth_date(child))} · позицій {len(items)}"]
     rows = sub_tabs(group, "f:lg")
     rows += _rows([B(f"{mark(p['code'], intro, months)} {catalog.name(p['code'])}",
                      callback_data=f"f:p:{p['code']}") for p in items])
+    toggle = rare_toggle(group, f"lg:{group}", show_rare)
+    if toggle:
+        rows.append(toggle)
     rows.append([B("‹ Продукти", callback_data="f:lib"), B("🏠 Головна", callback_data="f:home")])
     return "\n".join(lines), M(rows)
 
@@ -348,7 +422,7 @@ def plates_screen(child, band: str | None = None) -> tuple[str, M]:
                  B("✍️ У мене вже є…", callback_data="f:have")])
     rows.append([B(("• " if b == band else "") + t, callback_data=f"f:plates:{b}")
                  for b, _, _, t in catalog.AGE_BANDS])
-    rows.append([B("🏠 Головна", callback_data="f:home")])
+    rows.append([B("🧊 Холодильник", callback_data="f:fr"), B("🏠 Головна", callback_data="f:home")])
     return "\n".join(lines), M(rows)
 
 
@@ -483,9 +557,46 @@ def recipes_screen(child, show_all: bool = False, stock: list[str] | None = None
     return "\n".join(lines), M(rows)
 
 
-RECIPE_FIND_PROMPT = ("🔍 Напиши продукт, і покажу всі рецепти з ним.\n\n"
-                      "Наприклад: <code>курка</code>, <code>гарбуз</code>, "
-                      "<code>сир</code> або кілька через кому.")
+RECIPE_FIND_PROMPT = ("🔍 Напиши продукт або назву страви - покажу все, що знайду.\n\n"
+                      "Наприклад: <code>курка</code>, <code>гарбузовий суп</code>, "
+                      "<code>сирники</code> або кілька продуктів через кому.\n\n"
+                      "<i>Так само працює будь-яке повідомлення в чаті: кнопку "
+                      "натискати не обовʼязково.</i>")
+
+
+def search_result(child, query: str, codes: list[str], recipes: list[dict],
+                  intro: dict) -> tuple[str, M]:
+    """Відповідь на довільний текст: рецепти за назвою, продукти, добір тарілки."""
+    months = months_of(child)
+    lines = [f"🔍 <b>{esc(query.strip()[:80])}</b>", ""]
+    rows: list[list[B]] = []
+
+    if recipes:
+        fit = [r for r in recipes if r["age_from"] <= months]
+        tail = "" if len(fit) == len(recipes) else f", підходять за віком {len(fit)}"
+        lines.append(f"👨‍🍳 Рецептів: <b>{len(recipes)}</b>{tail}")
+        rows += [[_recipe_button(r, months)] for r in recipes]
+
+    if codes:
+        lines += ["", "🥕 Продукти в запиті: " + ", ".join(catalog.label(c) for c in codes)]
+        need = suggest.missing_slots(codes)
+        if need:
+            lines.append("До повної тарілки бракує: "
+                         + ", ".join(suggest.SLOT_LABEL[s] for s in need)
+                         + ". Доберу, якщо треба.")
+        else:
+            lines.append("Це вже збалансована тарілка: є рослинне, вуглевод, білок і жир.")
+        rows += _rows([B(f"{catalog.label(c)}", callback_data=f"f:p:{c}") for c in codes])
+        rows.append([B("🍲 Зібрати тарілку", callback_data="f:hv"),
+                     B("🧊 В холодильник", callback_data="f:frput")])
+
+    if not recipes and not codes:
+        lines.append("Нічого не знайшов. Спробуй простіше: <code>курка</code>, "
+                     "<code>гарбуз</code>, <code>сирники</code>.")
+
+    rows.append([B("👨‍🍳 Всі рецепти", callback_data="f:rec"),
+                 B("🏠 Головна", callback_data="f:home")])
+    return "\n".join(lines), M(rows)
 
 
 def recipes_found(child, codes: list[str], found: list[dict],
@@ -667,18 +778,21 @@ def growth_screen(child) -> tuple[str, M]:
 # ─────────────────────────── налаштування ───────────────────────────
 
 
-def settings(child, family_id: int, remind: bool) -> tuple[str, M]:
+def settings(child, family_id: int, remind: bool, show_rare: bool = False) -> tuple[str, M]:
     members = db.family_members(family_id)
     lines = [f"⚙️ <b>Налаштування</b>", "",
              f"Дитина: <b>{esc(child['name'])}</b>, {esc(child['birth_date'])}, "
              f"{'дівчинка' if child['sex'] == 'girls' else 'хлопчик'}",
              f"Доступ мають: " + ", ".join(esc(m["name"]) for m in members),
              f"Нагадування: {'увімкнені' if remind else 'вимкнені'}",
+             f"Рідкісні продукти: {'показані' if show_rare else 'сховані'}",
              "",
              "<i>Бібліотека продуктів - довідка на основі рекомендацій ВООЗ, AAP і EFSA. "
              "Вона не замінює педіатра.</i>"]
     rows = [[B("➕ Додати дорослого", callback_data="f:inv")],
             [B(("🔕 Вимкнути" if remind else "🔔 Увімкнути") + " нагадування", callback_data="f:rem")],
+            [B(("🙈 Сховати" if show_rare else "🥬 Показати") + " рідкісні продукти",
+               callback_data="f:rare:set")],
             [B("✏️ Змінити дату народження", callback_data="f:editbirth")],
             [B("ℹ️ Інструкція", callback_data="f:guide"),
              B("🔒 Дані і приватність", callback_data="f:privacy")],
@@ -769,6 +883,7 @@ def fridge(child, stock: list[str], since: dict[str, int], intro: dict) -> tuple
     if stock:
         rows.append([B("🍲 Скласти тарілку з цього", callback_data="f:frgen")])
     rows.append([B("🛒 Список покупок на тиждень", callback_data="f:frbuy")])
+    rows.append([B("🍲 Ідеї тарілок за віком", callback_data="f:plates")])
     rows.append([B("➕ Додати", callback_data="f:fradd"), B("✍️ Списком", callback_data="f:frtext")])
     if stock:
         rows.append([B("➖ Прибрати", callback_data="f:frdel"),
@@ -777,7 +892,8 @@ def fridge(child, stock: list[str], since: dict[str, int], intro: dict) -> tuple
     return "\n".join(lines), M(rows)
 
 
-def fridge_pick(child, key: str, stock: list[str], intro: dict) -> tuple[str, M]:
+def fridge_pick(child, key: str, stock: list[str], intro: dict,
+                show_rare: bool = False) -> tuple[str, M]:
     months = months_of(child)
     key = catalog.default_key(key)
     emoji, title = catalog.key_title(key)
@@ -788,10 +904,13 @@ def fridge_pick(child, key: str, stock: list[str], intro: dict) -> tuple[str, M]
     if stock:
         lines += ["", "Зараз усередині: " + ", ".join(catalog.name(c) for c in stock)]
     rows = sub_tabs(key, "f:fradd")
-    items = sorted(catalog.by_key(key), key=lambda p: (p["from_month"], p["name"]))
+    items = shelf_items(key, show_rare)
     rows += _rows([B(("✔️ " if p["code"] in stock else mark(p["code"], intro, months) + " ")
                      + catalog.name(p["code"]),
                      callback_data=f"f:frt:{p['code']}") for p in items])
+    toggle = rare_toggle(key, f"fradd:{key}", show_rare)
+    if toggle:
+        rows.append(toggle)
     nav = [B(f"{catalog.GROUPS[g][0]} {catalog.GROUPS[g][1]}",
              callback_data=f"f:fradd:{g}.{catalog.SUBS_OF[g][0]}" if g in catalog.SUBS_OF
              else f"f:fradd:{g}")
@@ -882,6 +1001,65 @@ def fridge_shopping(child, items: list[tuple[str, str]], stock: list[str],
     return "\n".join(lines), M(rows)
 
 
+# ─────────────────────── що ввести далі ───────────────────────
+
+
+def next_up(child, intro: dict, items: list[tuple[str, str]], hold: list[str],
+            stock: list[str]) -> tuple[str, M]:
+    """Головна підказка бота: один наступний продукт, і чому саме він."""
+    months = months_of(child)
+    total = len(catalog.products())
+    lines = ["🎯 <b>Що ввести далі</b>",
+             f"{esc(child['name'])}, {growth.age_text(birth_date(child))} · "
+             f"введено {len(intro)} з {total}", ""]
+    rows: list[list[B]] = []
+
+    if hold:
+        now_ts = db.now()
+        lines.append("⏳ <b>Зараз новий продукт вводити рано.</b>")
+        for code in hold[:3]:
+            row = intro[code]
+            days = max((now_ts - row["first_ts"]) // 86400 + 1, 1)
+            state = "під наглядом після реакції" if row["status"] == "watch" else f"день {days} з 3"
+            lines.append(f"· {catalog.label(code)} - {state}")
+        lines += ["", "Правило трьох днів: новий продукт тримаємо в меню 2-3 дні поспіль і "
+                  "не додаємо поруч інший новий, інакше не зрозуміло, на що була реакція.",
+                  "", "Коли переносить добре - познач «освоєно», і я одразу підкажу наступний."]
+        rows += [[B(f"✅ Освоєно: {catalog.name(c)}", callback_data=f"f:st:{c}:ok"),
+                  B("⚠️ Реакція", callback_data=f"f:react:{c}")] for c in hold[:3]]
+        rows.append([B("🍽 Записати прийом їжі", callback_data="f:new"),
+                     B("🏠 Головна", callback_data="f:home")])
+        return "\n".join(lines), M(rows)
+
+    if not items:
+        lines.append("За віком уже введено все, що бот знає. Далі просто тримаємо "
+                     "різноманіття: щодня рослинне, вуглевод, білок і жир.")
+        rows.append([B("🍲 Ідеї тарілок", callback_data="f:plates"),
+                     B("🏠 Головна", callback_data="f:home")])
+        return "\n".join(lines), M(rows)
+
+    lines.append("Порядок такий: спершу алергени, далі те, чого в раціоні найменше.")
+    lines.append("")
+    for code, why in items:
+        prod = catalog.product(code)
+        lines.append(f"{prod['emoji']} <b>{esc(prod['name'])}</b>{catalog.mark_allergen(code)} "
+                     f"· з {prod['from_month']} міс")
+        lines.append(f"   <i>{esc(why)}</i>")
+        lines.append(f"   {esc(catalog.serving(code, months))}")
+        lines.append("")
+    lines.append("<i>Вводимо по одному і тримаємо 2-3 дні поспіль.</i>")
+
+    for code, _ in items:
+        rows.append([B(f"🍽 Подали: {catalog.name(code)}", callback_data=f"f:quick:{code}"),
+                     B("🥕 Картка", callback_data=f"f:p:{code}")])
+    fresh = [c for c, _ in items if c not in stock]
+    if fresh:
+        rows.append([B("🧊 Додати в холодильник", callback_data="f:nxfr")])
+    rows.append([B("🛒 Покупки на тиждень", callback_data="f:frbuy"),
+                 B("🏠 Головна", callback_data="f:home")])
+    return "\n".join(lines), M(rows)
+
+
 # ─────────────────────────── інструкція ───────────────────────────
 
 
@@ -911,8 +1089,10 @@ def _guide_text(key: str) -> str:
             "тільки для таблиць зростання ВООЗ: вони різні для дівчаток і хлопчиків.\n\n"
             "<b>2. Перший запис.</b> «🍽 Записати прийом їжі» → обери продукти "
             "(до 6 за раз) → «✅ Подали» → вкажи, який це прийом їжі. Два-три тапи.\n\n"
-            "<b>3. Далі буде швидше.</b> Екран «⭐ Часте» тримає те, що ви даєте "
-            "найчастіше, тому щоденний запис коштує пару дотиків.\n\n"
+            "<b>3. Далі буде швидше.</b> Запис відкривається на вкладці «🧊 З холодильника», "
+            "поруч «⭐ Часте» - те, що ви даєте найчастіше. Щоденний запис коштує пару дотиків.\n\n"
+            "<b>4. Забули записати?</b> На екрані вибору прийому їжі є «Сьогодні / Вчора / "
+            "📅 Інша дата» - запис ляже в потрібний день.\n\n"
             "<b>Що лишається в чаті.</b> Кожен запис приходить окремим повідомленням "
             "без кнопок. Його вже ніщо не перезапише: гортаєш чат і бачиш, що дитина "
             "їла сьогодні, вчора і тиждень тому.\n\n"
@@ -926,12 +1106,15 @@ def _guide_text(key: str) -> str:
             "<b>Правило чотирьох слотів.</b> Збалансована тарілка це рослинне + "
             "вуглевод + білок + жир. Бот показує, чого бракує, просто під час набору.\n\n"
             "Жир додаємо завжди: без нього не засвояться вітаміни A, D, E і K.\n\n"
-            f"<b>🍲 Тарілки.</b> {plates_n} готових ідей за віком (6-8, 9-11, 12+ міс). "
-            "Кнопка «Подали цю тарілку» кидає весь склад у щоденник одним дотиком.\n\n"
+            f"<b>🍲 Ідеї тарілок.</b> {plates_n} готових наборів за віком (6-8, 9-11, 12+ міс) "
+            "лежать у Холодильнику. Кнопка «Подали цю тарілку» кидає весь склад у щоденник "
+            "одним дотиком.\n\n"
             "<b>🎲 Ще варіанти.</b> Збирає нові тарілки з продуктів, дозволених за віком. "
             "Знайоме бере частіше за нове, і в одній тарілці максимум один новий продукт.\n\n"
-            "<b>✍️ У мене вже є…</b> Напиши «морква і курка» звичайним повідомленням, "
-            "і бот добере те, чого бракує до повної тарілки. Працює будь-де в чаті.\n\n"
+            "<b>🔍 Пошук просто в чаті.</b> Напиши «гарбузовий суп» - покажу рецепт, "
+            "напиши «морква і курка» - доберу решту тарілки. Кнопку тиснути не треба.\n\n"
+            "<b>🎯 Що ввести далі.</b> Кнопка на головній: один наступний продукт і чому "
+            "саме він. Поки триває правило трьох днів, вона про це і скаже.\n\n"
             f"<b>👨‍🍳 Рецепти.</b> {recipes_n} штук з кроками, порадою і як заморожувати. "
             "Фільтруються за віком дитини.\n\n"
             "<b>📔 Щоденник.</b> День за днем, нотатка до прийому, видалення помилкового "
@@ -948,6 +1131,8 @@ def _guide_text(key: str) -> str:
             "<code>морква, гречка, індичка, олія, йогурт</code>. До 20 позицій за раз.\n\n"
             "<b>🍲 Скласти тарілку з цього.</b> Той самий генератор, але обмежений тим, "
             "що є вдома. Якщо під якийсь слот нічого немає, бот прямо скаже, чого бракує.\n\n"
+            "Холодильник ще й перша вкладка запису їжі: «🍽 Записати прийом їжі» одразу "
+            "показує те, що вдома, а вся бібліотека лишається поруч.\n\n"
             "<b>🛒 Список покупок на тиждень.</b> Рахує норму на 7 днів: 6 різних "
             "рослинних, 3 вуглеводи, 4 білки, 2 жири. Усередині білка стежить за "
             "різноманіттям: мʼясо двічі, риба, яйця і бобові по разу.\n\n"
@@ -973,6 +1158,10 @@ def _guide_text(key: str) -> str:
             "<b>Ризик подавитися</b> вказаний у кожній картці. Це не заборона, а "
             "інструкція з нарізки: виноград і черрі різати вздовж на чотири, "
             "сосиску ніколи кружальцями, цілі горіхи до 4-5 років тільки меленими.\n\n"
+            "<b>🥬 Рідкісні продукти.</b> Кейл, мангольд, топінамбур і решта екзотики "
+            "за замовчуванням сховані: у списках вони тільки заважають. Кнопка «Показати "
+            "рідкісні» внизу полиці вмикає їх назавжди, у налаштуваннях є той самий перемикач. "
+            "Бот їх не пропонує сам, але якщо такий продукт є вдома - працює з ним як зі звичайним.\n\n"
             "<b>Кнопки в картці.</b> «🍽 Подали зараз» записує продукт одним дотиком. "
             "«✅ Освоєно» і «⛔ Уникаємо» міняють статус. Продукти зі статусом «уникаємо» "
             "бот більше не пропонує в тарілках."

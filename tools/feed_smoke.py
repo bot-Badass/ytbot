@@ -252,10 +252,19 @@ async def main() -> None:
     await press("f:rfridge")
     await press("f:rfind")
     await say("курка")
-    assert "Рецепти з" in bot.sent[-1], bot.sent[-1]
+    assert "🔍" in bot.sent[-1] and "Рецептів" in bot.sent[-1], bot.sent[-1]
+    await press("f:rfind")
+    await say("гарбузовий суп")                  # пошук за НАЗВОЮ страви
+    assert "Гарбуз" in bot.sent[-1], bot.sent[-1]
     await press("f:rfind")
     await say("хтозна що")                       # має попросити ще раз
     ctx.user_data.pop("await", None)
+    from feed import search
+    named = search.recipes_by_name("сирники")
+    assert named and "ирник" in named[0]["title"], named
+    assert not search.find("хтозна що")["recipes"]
+    print(f"пошук за назвою страви: «сирники» -> {named[0]['title']}, "
+          f"«гарбузовий суп» -> {search.find('гарбузовий суп')['recipes'][0]['title']}")
     found = catalog.recipes_with(["kurka"])
     assert found, "пошук рецептів за продуктом нічого не знайшов"
     covered = {c for r in catalog.recipes() for c in r["products"]}
@@ -283,11 +292,16 @@ async def main() -> None:
     payload = len(f"f:gu:{longest}".encode())
     assert payload <= 64, f"callback_data {payload} байт: {longest}"
     print(f"генератор: {len(gen)} варіантів, найдовша callback_data {payload}/64 байт")
-    # вільний текст із продуктами веде в добір, а не на головну
+    # вільний текст веде в пошук, а не на головну
     upd = Update(bot, max_u, text="у нас є гречка та індичка")
     await handlers.on_free_text(upd, ctx)
+    assert "🔍" in bot.sent[-1] and "Продукти в запиті" in bot.sent[-1], bot.sent[-1]
+    await press("f:hv")
     assert "У тебе вже є" in bot.sent[-1], bot.sent[-1]
-    print("вільний текст «гречка та індичка» -> добір тарілки")
+    upd = Update(bot, max_u, text="сирники")
+    await handlers.on_free_text(upd, ctx)
+    assert "ирник" in bot.sent[-1], bot.sent[-1]
+    print("вільний текст: «гречка та індичка» -> продукти + тарілка, «сирники» -> рецепт")
 
     # ── холодильник ──
     fid = db.member(max_u.id)["family_id"]
@@ -330,6 +344,92 @@ async def main() -> None:
     assert not db.pantry_codes(fid)
     await press("f:frtext")
     await say("гарбуз, кіноа, лосось, авокадо")
+
+    # ── рідкісні продукти ──
+    rare_codes = [c for c in catalog.products() if catalog.is_rare(c)]
+    assert rare_codes, "жоден продукт не позначений як рідкісний"
+    assert all(not catalog.is_rare(p["code"]) for p in catalog.by_key("veg", rare=False))
+    gen_rare = suggest.generate(24, {}, 40)
+    assert not any(catalog.is_rare(c) for pl in gen_rare for c in pl), \
+        "генератор пропонує екзотику"
+    buy = suggest.shopping(24, {}, [])
+    assert not any(catalog.is_rare(c) for c, _ in buy), "список покупок пропонує екзотику"
+    await press("f:lib")
+    await press("f:lg:veg")
+    await press("f:rare:lg:veg")                 # показати
+    assert db.get_kv(fid, "rare") == "1"
+    await press("f:rare:lg:veg")                 # сховати
+    assert db.get_kv(fid, "rare") == "0"
+    await press("f:rare:lib")
+    await press("f:rare:set")
+    await press("f:new")
+    await press("f:rare:grp:veg")
+    await press("f:fradd:veg")
+    await press("f:rare:fradd:veg")
+    await press("f:set")
+    print(f"рідкісні: {len(rare_codes)} позицій сховано, генератор і покупки їх не беруть")
+
+    # ── тарілка з холодильника: перша вкладка запису ──
+    await press("f:frtext")
+    await say("морква, гречка, індичка, олія")
+    await press("f:new")
+    assert ctx.user_data["grp"] == "fridge", ctx.user_data.get("grp")
+    assert "З холодильника" in bot.sent[-1], bot.sent[-1]
+    await press("f:sel:morkva")
+    assert ctx.user_data["grp"] == "fridge", "вибір продукту зіскочив з вкладки"
+    assert "З холодильника" in bot.sent[-1], bot.sent[-1]
+    await press("f:grp:fav")
+    await press("f:sel:grechka")
+    assert ctx.user_data["grp"] == "fav", "вибір продукту зіскочив з «Часте»"
+    print("запис їжі: перша вкладка це холодильник, вибір не стрибає між полицями")
+
+    # ── запис заднім числом ──
+    await press("f:new")
+    await press("f:sel:morkva")
+    await press("f:save")
+    await press("f:day:1")                       # вчора
+    await press("f:save:lunch")
+    last = db.q1("SELECT ts FROM meal ORDER BY id DESC LIMIT 1")["ts"]
+    y_from, y_to, _ = ui.day_bounds(-1)
+    assert y_from <= last < y_to, "запис не потрапив у вчорашній день"
+    assert "day" not in ctx.user_data, "обраний день не скинувся після запису"
+    record = bot.sent[-2] if bot.sent[-2].startswith("✅") else bot.sent[-1]
+    assert "," in record.split("·")[1], f"у записі за вчора немає дати: {record}"
+    await press("f:new")
+    await press("f:sel:banan")
+    await press("f:save")
+    await press("f:day:ask")
+    from datetime import date as _date, timedelta as _td
+    old = _date.today() - _td(days=5)
+    await say(old.strftime("%d.%m.%Y"))
+    await press("f:save:dinner")
+    last = db.q1("SELECT ts FROM meal ORDER BY id DESC LIMIT 1")["ts"]
+    o_from, o_to, _ = ui.bounds_of(old)
+    assert o_from <= last < o_to, "запис не потрапив у вказану дату"
+    await press("f:day:0")
+    print(f"запис заднім числом: вчора і {old.strftime('%d.%m')} лягли у свої дні")
+
+    # ── що ввести далі ──
+    await press("f:next")
+    hold = suggest.holding(db.intro_map(child["id"]), db.now())
+    if hold:
+        assert "вводити рано" in bot.sent[-1], bot.sent[-1]
+        for code in hold:
+            db.set_status(child["id"], code, "ok")
+        await press("f:next")
+    items = suggest.next_products(ui.months_of(child), db.intro_map(child["id"]),
+                                  db.pantry_codes(fid))
+    assert items, "не запропоновано жодного наступного продукту"
+    assert all(c not in db.intro_map(child["id"]) for c, _ in items), "пропонує вже введене"
+    assert not any(catalog.is_rare(c) for c, _ in items), "пропонує екзотику"
+    await press("f:nxfr")
+    assert set(ctx.user_data["next"]) <= set(db.pantry_codes(fid)), \
+        "«додати в холодильник» не поклало продукти"
+    db.set_status(child["id"], items[0][0], "watch")
+    db.touch_intro(child["id"], items[0][0], db.now())
+    await press("f:next")
+    assert "вводити рано" in bot.sent[-1], "правило трьох днів не спрацювало"
+    print(f"що ввести далі: {len(items)} кандидати, правило трьох днів тримає паузу")
 
     # ── щоденник ──
     await press("f:diary")

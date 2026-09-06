@@ -4,7 +4,7 @@ from __future__ import annotations
 import logging
 import os
 import re
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, time, timedelta
 
 from telegram import InlineKeyboardButton as B
 from telegram import InlineKeyboardMarkup as M
@@ -13,7 +13,7 @@ from telegram.constants import ParseMode
 from telegram.error import TelegramError
 from telegram.ext import ApplicationHandlerStop, ContextTypes
 
-from . import catalog, db, growth, suggest, ui
+from . import catalog, db, growth, search, suggest, ui
 
 log = logging.getLogger("feed")
 
@@ -56,6 +56,35 @@ def _who(update: Update) -> str:
 
 def _draft(context: ContextTypes.DEFAULT_TYPE) -> list[str]:
     return context.user_data.setdefault("draft", [])
+
+
+def _rare(family_id: int) -> bool:
+    """Чи показувати екзотику. Прапорець спільний на родину, живе між сесіями."""
+    return db.get_kv(family_id, "rare", "0") == "1"
+
+
+# коли ставимо час для запису за минулий день: реального ми не знаємо,
+# а «13:00» у щоденнику читається краще, ніж момент, коли мама згадала
+MEAL_HOUR = {"breakfast": 9, "lunch": 13, "dinner": 19, "snack": 16}
+
+
+def _meal_day(context: ContextTypes.DEFAULT_TYPE) -> date | None:
+    iso = context.user_data.get("day")
+    if not iso:
+        return None
+    try:
+        return date.fromisoformat(iso)
+    except ValueError:
+        return None
+
+
+def _meal_ts(context: ContextTypes.DEFAULT_TYPE, kind: str) -> int | None:
+    """None означає «зараз» - тоді add_meal сам поставить поточний час."""
+    day = _meal_day(context)
+    if not day or day == date.today():
+        return None
+    moment = datetime.combine(day, time(MEAL_HOUR.get(kind, 12), 0), ui.TZ)
+    return int(moment.timestamp())
 
 
 def _guess_kind() -> str:
@@ -287,16 +316,38 @@ async def on_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
     if kind == "rfind":
         context.user_data.pop("await", None)
-        codes = suggest.parse_products(text, limit=3)
-        if not codes:
+        res = search.find(text)
+        if not res["codes"] and not res["recipes"]:
             context.user_data["await"] = {"k": "rfind"}
             await update.message.reply_text(
-                "Не впізнав продукт. Напиши простіше, наприклад: курка або гарбуз.")
+                "Нічого не знайшов. Напиши простіше, наприклад: курка, гарбуз або сирники.")
             raise ApplicationHandlerStop
-        found = catalog.recipes_with(codes)
-        near = [] if found else catalog.recipes_with(_same_shelf(codes))
-        t_, kb = ui.recipes_found(child, codes, found, near)
+        if res["codes"] and not res["recipes"]:
+            near = catalog.recipes_with(_same_shelf(res["codes"]))
+            t_, kb = ui.recipes_found(child, res["codes"], [], near)
+        else:
+            context.user_data["found"] = res["codes"]
+            t_, kb = ui.search_result(child, text, res["codes"], res["recipes"],
+                                      db.intro_map(child["id"]))
         await update.message.reply_text(t_, parse_mode=ParseMode.HTML, reply_markup=kb)
+        raise ApplicationHandlerStop
+
+    if kind == "mealdate":
+        value = _parse_date(text)
+        if not value:
+            await update.message.reply_text("Не зрозумів дату. Напиши як 03.09.2026.")
+            raise ApplicationHandlerStop
+        context.user_data.pop("await", None)
+        context.user_data["day"] = value.isoformat()
+        d = _draft(context)
+        if not d:
+            t, kb = ui.home(child, db.intro_map(child["id"]))
+            await update.message.reply_text(
+                f"Записую за {ui.day_label(value)}. Обери, що було в тарілці.")
+            await update.message.reply_text(t, parse_mode=ParseMode.HTML, reply_markup=kb)
+            raise ApplicationHandlerStop
+        t, kb = ui.pick_kind(d, value)
+        await update.message.reply_text(t, parse_mode=ParseMode.HTML, reply_markup=kb)
         raise ApplicationHandlerStop
 
     if kind == "mnote":
@@ -322,10 +373,11 @@ async def on_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 # ─────────────────────────── збереження прийому ───────────────────────────
 
 
-def _save_meal(child, codes: list[str], kind: str, user_id: int) -> list[str]:
+def _save_meal(child, codes: list[str], kind: str, user_id: int,
+               ts: int | None = None) -> list[str]:
     intro_before = db.intro_map(child["id"])
     fresh = [c for c in codes if c not in intro_before]
-    db.add_meal(child["id"], kind, codes, user_id)
+    db.add_meal(child["id"], kind, codes, user_id, ts=ts)
     now = db.now()
     for code in fresh:
         db.add_nudge(child["id"], code, _tonight_ts(), "reaction_check")
@@ -349,14 +401,15 @@ def _tonight_ts() -> int:
 
 
 async def _record_and_continue(update: Update, context: ContextTypes.DEFAULT_TYPE,
-                               child, codes: list[str], kind: str, fresh: list[str]) -> None:
+                               child, codes: list[str], kind: str, fresh: list[str],
+                               ts: int | None = None) -> None:
     """Запис про їжу лишається в чаті назавжди, навігація йде окремим повідомленням.
 
     Раніше і запис, і наступний екран жили в одному повідомленні, тому «Головна»
     затирала те, що дитина щойно з'їла. Тепер редагування зупиняється на записі:
     у нього немає кнопок, отже перезаписати його нічим.
     """
-    record = ui.meal_record(child, codes, kind)
+    record = ui.meal_record(child, codes, kind, ts)
     query = update.callback_query
     posted = False
     if query:
@@ -425,23 +478,31 @@ async def on_button(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         return
     member, child = got
     cid = child["id"]
+    fid = child["family_id"]
     intro = db.intro_map(cid)
+    show_rare = _rare(fid)
     await query.answer()
 
     if action == "home":
         context.user_data["draft"] = []
         context.user_data.pop("await", None)
+        context.user_data.pop("day", None)
         return await _show(update, *ui.home(child, intro))
 
     if action == "new":
         context.user_data["draft"] = []
-        return await _show(update, *ui.draft(child, [], intro, "fav"))
+        # починаємо з холодильника: майже завжди дитині дають те, що вдома вже є
+        tab = "fridge" if db.pantry_codes(fid) else "fav"
+        context.user_data["grp"] = tab
+        return await _show(update, *ui.draft(child, [], intro, tab, show_rare))
 
     if action == "new_keep":
-        return await _show(update, *ui.draft(child, _draft(context), intro, "fav"))
+        tab = context.user_data.get("grp", "fav")
+        return await _show(update, *ui.draft(child, _draft(context), intro, tab, show_rare))
 
     if action == "grp":
-        return await _show(update, *ui.draft(child, _draft(context), intro, parts[2]))
+        context.user_data["grp"] = parts[2]
+        return await _show(update, *ui.draft(child, _draft(context), intro, parts[2], show_rare))
 
     if action == "sel":
         code = parts[2]
@@ -452,25 +513,40 @@ async def on_button(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             await query.answer("У тарілці вже 6 продуктів", show_alert=True)
         else:
             d.append(code)
-        return await _show(update, *ui.draft(child, d, intro, catalog.key_of(code)))
+        # лишаємось на тій самій вкладці: інакше вибір з холодильника викидав у «Овочі»
+        tab = context.user_data.get("grp") or catalog.key_of(code)
+        return await _show(update, *ui.draft(child, d, intro, tab, show_rare))
 
     if action == "save":
         d = _draft(context)
         if not d:
             return await _show(update, *ui.draft(child, d, intro, "fav"))
         if len(parts) == 2:
-            return await _show(update, *ui.pick_kind(d))
+            return await _show(update, *ui.pick_kind(d, _meal_day(context)))
         kind = parts[2]
-        fresh = _save_meal(child, d, kind, user.id)
+        ts = _meal_ts(context, kind)
+        fresh = _save_meal(child, d, kind, user.id, ts)
         context.user_data["draft"] = []
-        return await _record_and_continue(update, context, child, d, kind, fresh)
+        context.user_data.pop("day", None)
+        return await _record_and_continue(update, context, child, d, kind, fresh, ts)
+
+    if action == "day":
+        d = _draft(context)
+        choice = parts[2] if len(parts) > 2 else "0"
+        if choice == "ask":
+            context.user_data["await"] = {"k": "mealdate"}
+            return await _show(update, ui.MEAL_DATE_PROMPT)
+        back = date.today() - timedelta(days=int(choice))
+        context.user_data["day"] = back.isoformat()
+        if not d:
+            return await _show(update, *ui.draft(child, d, intro,
+                                                 context.user_data.get("grp", "fav"), show_rare))
+        return await _show(update, *ui.pick_kind(d, back))
 
     if action == "quick":
         code, kind = parts[2], _guess_kind()
         fresh = _save_meal(child, [code], kind, user.id)
         return await _record_and_continue(update, context, child, [code], kind, fresh)
-
-    fid = child["family_id"]
 
     if action == "fr":
         context.user_data.pop("await", None)
@@ -480,14 +556,15 @@ async def on_button(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
     if action == "fradd":
         key = parts[2] if len(parts) > 2 else "veg"
-        return await _show(update, *ui.fridge_pick(child, key, db.pantry_codes(fid), intro))
+        return await _show(update, *ui.fridge_pick(child, key, db.pantry_codes(fid),
+                                                   intro, show_rare))
 
     if action == "frt":
         code = parts[2]
         put = db.pantry_toggle(fid, code, user.id)
         await query.answer("Поклав у холодильник" if put else "Забрав з холодильника")
         return await _show(update, *ui.fridge_pick(child, catalog.key_of(code),
-                                                   db.pantry_codes(fid), intro))
+                                                   db.pantry_codes(fid), intro, show_rare))
 
     if action == "frdel":
         stock = db.pantry_codes(fid)
@@ -534,11 +611,40 @@ async def on_button(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         added = db.pantry_add(fid, codes, user.id)
         return await _show(update, *ui.fridge_added(added, [c for c in codes if c not in added]))
 
+    if action == "rare":
+        db.set_kv(fid, "rare", "0" if show_rare else "1")
+        show_rare = not show_rare
+        where = parts[2] if len(parts) > 2 else "lib"
+        key = parts[3] if len(parts) > 3 else "veg"
+        if where == "lg":
+            return await _show(update, *ui.group_list(child, key, intro, show_rare))
+        if where == "grp":
+            return await _show(update, *ui.draft(child, _draft(context), intro, key, show_rare))
+        if where == "fradd":
+            return await _show(update, *ui.fridge_pick(child, key, db.pantry_codes(fid),
+                                                       intro, show_rare))
+        if where == "set":
+            remind = db.get_kv(fid, "remind", "1") == "1"
+            return await _show(update, *ui.settings(child, fid, remind, show_rare))
+        return await _show(update, *ui.library(child, intro, show_rare))
+
+    if action == "next":
+        stock = db.pantry_codes(fid)
+        hold = suggest.holding(intro, db.now())
+        items = [] if hold else suggest.next_products(ui.months_of(child), intro, stock)
+        context.user_data["next"] = [c for c, _ in items]
+        return await _show(update, *ui.next_up(child, intro, items, hold, stock))
+
+    if action == "nxfr":
+        codes = context.user_data.get("next", [])
+        added = db.pantry_add(fid, codes, user.id)
+        return await _show(update, *ui.fridge_added(added, [c for c in codes if c not in added]))
+
     if action == "lib":
-        return await _show(update, *ui.library(child, intro))
+        return await _show(update, *ui.library(child, intro, show_rare))
 
     if action == "lg":
-        return await _show(update, *ui.group_list(child, parts[2], intro))
+        return await _show(update, *ui.group_list(child, parts[2], intro, show_rare))
 
     if action == "p":
         return await _show(update, *ui.card(child, parts[2], intro))
@@ -577,7 +683,7 @@ async def on_button(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if action == "plu":
         plate = catalog.plate(parts[2])
         context.user_data["draft"] = list(plate["items"])[:6]
-        return await _show(update, *ui.pick_kind(context.user_data["draft"]))
+        return await _show(update, *ui.pick_kind(context.user_data["draft"], _meal_day(context)))
 
     if action == "gen":
         context.user_data["plate_back"] = "f:gen"
@@ -594,11 +700,19 @@ async def on_button(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if action == "gu":
         codes = suggest.decode(parts[2])[:6]
         context.user_data["draft"] = codes
-        return await _show(update, *ui.pick_kind(codes))
+        return await _show(update, *ui.pick_kind(codes, _meal_day(context)))
 
     if action == "have":
         context.user_data["await"] = {"k": "have"}
         return await _show(update, ui.HAVE_PROMPT)
+
+    if action == "hv":
+        found = context.user_data.get("found", [])
+        if not found:
+            context.user_data["await"] = {"k": "have"}
+            return await _show(update, ui.HAVE_PROMPT)
+        plates = suggest.complete(ui.months_of(child), intro, found, 3)
+        return await _show(update, *ui.have(child, found, plates, intro))
 
     if action == "rec":
         show_all = len(parts) > 2 and parts[2] == "all"
@@ -617,7 +731,7 @@ async def on_button(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if action == "ru":
         recipe = catalog.recipe(parts[2])
         context.user_data["draft"] = list(recipe["products"])[:6]
-        return await _show(update, *ui.pick_kind(context.user_data["draft"]))
+        return await _show(update, *ui.pick_kind(context.user_data["draft"], _meal_day(context)))
 
     if action == "diary":
         offset = int(parts[2]) if len(parts) > 2 else 0
@@ -646,13 +760,13 @@ async def on_button(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         return await _show(update, "Зріст у сантиметрах. Наприклад: 68.5")
 
     if action == "set":
-        remind = db.get_kv(member["family_id"], "remind", "1") == "1"
-        return await _show(update, *ui.settings(child, member["family_id"], remind))
+        remind = db.get_kv(fid, "remind", "1") == "1"
+        return await _show(update, *ui.settings(child, fid, remind, show_rare))
 
     if action == "rem":
-        cur = db.get_kv(member["family_id"], "remind", "1") == "1"
-        db.set_kv(member["family_id"], "remind", "0" if cur else "1")
-        return await _show(update, *ui.settings(child, member["family_id"], not cur))
+        cur = db.get_kv(fid, "remind", "1") == "1"
+        db.set_kv(fid, "remind", "0" if cur else "1")
+        return await _show(update, *ui.settings(child, fid, not cur, show_rare))
 
     if action == "inv":
         code = db.new_invite(member["family_id"])
@@ -706,16 +820,17 @@ async def on_free_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         return
     _, child = got
     intro = db.intro_map(child["id"])
-    found = suggest.parse_products(update.message.text or "")
-    if found:
-        context.user_data["found"] = found
-        plates = suggest.complete(ui.months_of(child), intro, found, 3)
-        text, kb = ui.have(child, found, plates, intro)
+    query = update.message.text or ""
+    res = search.find(query)
+    if res["codes"] or res["recipes"]:
+        context.user_data["found"] = res["codes"]
+        text, kb = ui.search_result(child, query, res["codes"], res["recipes"], intro)
         await update.message.reply_text(text, parse_mode=ParseMode.HTML, reply_markup=kb)
         return
     text, kb = ui.home(child, intro)
     await update.message.reply_text(
-        "Керування кнопками. Ще можна написати, що є під рукою - наприклад "
-        "«морква і курка» - і я доберу решту тарілки. Посилання на YouTube працює як раніше.",
+        "Керування кнопками. Ще можна просто написати продукт або страву - наприклад "
+        "«гарбуз» чи «гарбузовий суп» - і я покажу рецепти й підкажу тарілку. "
+        "Посилання на YouTube працює як раніше.",
         reply_markup=ReplyKeyboardRemove())
     await update.message.reply_text(text, parse_mode=ParseMode.HTML, reply_markup=kb)

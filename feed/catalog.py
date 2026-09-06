@@ -142,13 +142,30 @@ def key_title(key: str) -> tuple[str, str]:
     return GROUPS[group]
 
 
-def by_group(group: str, sub: str | None = None) -> list[dict]:
+def by_group(group: str, sub: str | None = None, rare: bool = True) -> list[dict]:
     return [p for p in products().values()
-            if p["group"] == group and (sub is None or p.get("sub") == sub)]
+            if p["group"] == group and (sub is None or p.get("sub") == sub)
+            and (rare or not p.get("rare"))]
 
 
-def by_key(key: str) -> list[dict]:
-    return by_group(*split_key(key))
+def by_key(key: str, rare: bool = True) -> list[dict]:
+    group, sub = split_key(key)
+    return by_group(group, sub, rare)
+
+
+def is_rare(code: str) -> bool:
+    """Екзотика: лежить у бібліотеці, але за замовчуванням схована.
+
+    Кейл, мангольд, топінамбур і решта того, чого немає в звичайному магазині.
+    Генератор тарілок і список покупок їх не пропонують, але якщо такий продукт
+    таки лежить у холодильнику - з ним усе працює як зі звичайним.
+    """
+    p = product(code)
+    return bool(p and p.get("rare"))
+
+
+def rare_count(key: str) -> int:
+    return sum(1 for p in by_key(key) if p.get("rare"))
 
 
 def band_for(months: int) -> str:

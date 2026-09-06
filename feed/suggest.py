@@ -57,7 +57,7 @@ ALIASES: dict[str, tuple[str, ...]] = {
     "losos": ("сьомга", "форель"),
     "tsvitna": ("цвітна",),
     "brokoli": ("броколі", "брокколі"),
-    "garbuz": ("тиква",),
+    "garbuz": ("тиква", "гарбузов"),
     "buriak": ("свекла",),
     "kabachok": ("цукіні",),
     "goroshok": ("горошок", "горох"),
@@ -98,7 +98,7 @@ def _norm(word: str) -> str:
     return re.sub(r"[^а-яїієґa-z']", "", word)
 
 
-def _stem(word: str) -> str:
+def stem(word: str) -> str:
     """Груба основа слова: обрізаємо українські закінчення."""
     word = _norm(word)
     for end in ("ами", "ями", "ові", "ею", "ою", "ів", "ам", "ах", "ий", "ої", "ою",
@@ -115,7 +115,7 @@ def _phrases(code: str) -> set[tuple[str, str]]:
     out: set[tuple[str, str]] = set()
     sources = [product["name"], *ALIASES.get(code, ())]
     for src in sources:
-        words = [_stem(w) for w in re.split(r"[\s(),]+", src) if len(w) > 2]
+        words = [stem(w) for w in re.split(r"[\s(),]+", src) if len(w) > 2]
         words = [w for w in words if w]
         for a, b in zip(words, words[1:]):
             out.add((a, b))
@@ -127,7 +127,7 @@ def _keys(code: str) -> set[str]:
     product = catalog.product(code)
     words = [w for w in re.split(r"[\s(),]+", product["name"]) if len(w) > 2]
     words += list(ALIASES.get(code, ()))
-    return {_stem(w) for w in words if _stem(w)}
+    return {stem(w) for w in words if stem(w)}
 
 
 def parse_products(text: str, limit: int = 6) -> list[str]:
@@ -140,7 +140,7 @@ def parse_products(text: str, limit: int = 6) -> list[str]:
     keys_of = dict(index)
     phrases: list[tuple[str, set[tuple[str, str]]]] = [(code, _phrases(code))
                                                        for code in catalog.products()]
-    tokens = [_stem(raw) for raw in re.split(r"[\s,;.+/&]+|\bі\b|\bта\b|\bи\b", text)]
+    tokens = [stem(raw) for raw in re.split(r"[\s,;.+/&]+|\bі\b|\bта\b|\bи\b", text)]
     found: list[str] = []
     used: set[str] = set()
     i = 0
@@ -200,6 +200,10 @@ def candidates(months: int, intro: dict, slot: str, mode: str,
         if code in exclude or product["group"] == "other":
             continue
         if code in NEVER or product.get("plate") is False:
+            continue
+        # екзотику не пропонуємо самі. Але якщо вона лежить у холодильнику
+        # (only задано), то це вже свідомий вибір - працюємо з нею як зі звичайною
+        if product.get("rare") and only is None:
             continue
         if only is not None and code not in only:
             continue
@@ -402,5 +406,90 @@ def shopping(months: int, intro: dict, stock: list[str], limit: int = 14) -> lis
                      and catalog.product(c).get("plate") is not False), None)
     if allergen:
         take(allergen, "алерген, який ще не вводили: чекати не треба")
+
+    return picked[:limit]
+
+
+# ─────────────────────── що ввести наступним ───────────────────────
+
+THREE_DAYS = 3 * 86400
+
+
+def holding(intro: dict, now_ts: int) -> list[str]:
+    """Продукти, які зараз «на карантині» правила трьох днів.
+
+    Поки триває знайомство з новим продуктом або він під наглядом після реакції,
+    інший новий вводити не можна: інакше не зрозуміло, на що була реакція.
+    """
+    out = []
+    for code, row in intro.items():
+        if row["status"] == "watch":
+            out.append(code)
+        elif row["status"] == "trying" and now_ts - row["first_ts"] < THREE_DAYS:
+            out.append(code)
+    return out
+
+
+def slot_coverage(intro: dict) -> dict[str, int]:
+    """Скільки продуктів кожного слоту вже введено."""
+    counts = {key: 0 for key, _, _ in SLOTS}
+    for code, row in intro.items():
+        if row["status"] == "avoid" or not catalog.product(code):
+            continue
+        slot = slot_of(code)
+        if slot:
+            counts[slot] += 1
+    return counts
+
+
+def next_products(months: int, intro: dict, stock: list[str] | None = None,
+                  limit: int = 3) -> list[tuple[str, str]]:
+    """Що логічно ввести наступним. Пари (код, чому саме він).
+
+    Порядок простий і його видно очима: спершу алерген, якого ще не пробували
+    (їх вводять рано і регулярно), далі слот, у якому в раціоні найменше
+    продуктів, і всередині - те, що вже лежить удома.
+    """
+    stock = set(stock or [])
+    counts = slot_coverage(intro)
+    lean = sorted(counts, key=lambda s: counts[s])
+
+    def ok(code: str) -> bool:
+        p = catalog.product(code)
+        return bool(p) and code not in intro and code not in NEVER \
+            and p.get("plate") is not False and not p.get("rare") \
+            and p["group"] != "other" and p["from_month"] <= months
+
+    # порядок у каталозі йде від базових продуктів до рідших, тому він
+    # кращий тайбрейк, ніж алфавіт: інакше «вуглевод» починається з амаранту
+    rank = {code: i for i, code in enumerate(catalog.products())}
+
+    def order(code: str) -> tuple:
+        p = catalog.product(code)
+        return (0 if code in stock else 1, p["from_month"], rank[code])
+
+    picked: list[tuple[str, str]] = []
+    taken: set[str] = set()
+
+    def take(code: str, why: str) -> None:
+        taken.add(code)
+        at_home = " Уже лежить у холодильнику." if code in stock else ""
+        picked.append((code, why + at_home))
+
+    allergens = sorted((c for c in catalog.allergen_codes() if ok(c)), key=order)
+    if allergens:
+        code = allergens[0]
+        take(code, f"Алерген ({catalog.product(code)['allergen']}), якого ще не пробували. "
+                   "Їх вводять рано і потім дають регулярно.")
+
+    for slot in lean:
+        if len(picked) >= limit:
+            break
+        pool = sorted((c for c in catalog.products()
+                       if ok(c) and c not in taken and slot_of(c) == slot), key=order)
+        if not pool:
+            continue
+        take(pool[0], f"У раціоні найменше закритий слот «{SLOT_LABEL[slot]}»: "
+                      f"продуктів там {counts[slot]}.")
 
     return picked[:limit]
