@@ -1240,3 +1240,49 @@ def guide(key: str = "start") -> tuple[str, M]:
                    for k in GUIDE_ORDER if k != key], 2)
     rows.append([B("🏠 Головна", callback_data="f:home")])
     return text, M(rows)
+
+
+# ─────────────────────── вечірній підсумок ───────────────────────
+
+
+def evening_digest(child, ask: list[tuple[int, str]], mastered: list[str],
+                   show_record: bool, can_next: bool) -> tuple[str, M]:
+    """Одна картка на родину за добу: перша подача, правило трьох днів, тихий день.
+
+    Свідомо коротка: її читають увечері з телефона, і вона має закриватися
+    одним тапом або взагалі не вимагати дії.
+    """
+    lines = [f"🌙 <b>{esc(child['name'])}: підсумок дня</b>", ""]
+
+    if ask:
+        names = ", ".join(catalog.label(c) for _, c in ask)
+        lines += [f"🆕 Уперше сьогодні: {names}.",
+                  "Як пройшло? Висип, червоні щоки, живіт, стілець - якщо щось "
+                  "впало в око, познач.", ""]
+    if mastered:
+        names = ", ".join(catalog.label(c) for c in mastered)
+        lines.append(f"✅ Три дні без реакцій, рахую освоєними: {names}.")
+        if can_next:
+            lines.append("Карантин знято - можна вводити новий продукт.")
+        lines.append("")
+    if show_record:
+        lines += ["📭 За сьогодні записів немає. Якщо їли - додай, поки памʼятаєш. "
+                  "Якщо був день на молоці, просто пропусти.", ""]
+
+    rows: list[list[B]] = []
+    for nid, code in ask:
+        p = catalog.product(code)
+        name = p["name"] if p else code
+        rows.append([B(f"✅ {name} - добре", callback_data=f"f:nudge:{nid}:ok"),
+                     B("⚠️ Була реакція", callback_data=f"f:nudge:{nid}:react")])
+    for code in mastered:
+        p = catalog.product(code)
+        name = p["name"] if p else code
+        rows.append([B(f"⚠️ {name} - все ж була реакція", callback_data=f"f:react:{code}")])
+    if can_next and not ask:
+        rows.append([B("➕ Що вводити далі", callback_data="f:next")])
+    if show_record:
+        rows.append([B("🍽 Записати", callback_data="f:new")])
+    rows.append([B("🔕 Не нагадувати", callback_data="f:rem")])
+
+    return "\n".join(lines).strip(), M(rows)

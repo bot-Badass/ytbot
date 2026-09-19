@@ -479,14 +479,28 @@ async def main() -> None:
     # ── нагадування ──
     db.run("UPDATE nudge SET due_ts=? WHERE done=0", (db.now() - 10,))
     from feed import reminders
-    await reminders.scan_nudges(Context(bot))
-    await reminders.evening_check(Context(bot))
-    open_nudges = db.due_nudges(db.now())
-    nid = db.q1("SELECT id FROM nudge WHERE done=0 LIMIT 1")
+    before = len(bot.sent)
+    await reminders.evening_digest(Context(bot))
+    digests = [s for s in bot.sent[before:] if s.startswith("🌙")]
+    adults = len(db.family_chats(db.member(max_u.id)["family_id"]))
+    assert len(digests) == adults, f"підсумків {len(digests)}, очікував по одному на дорослого"
+    assert len(set(digests)) == 1, "дорослі отримали різні підсумки"
+
+    # головне: повтор не має надсилати те саме ще раз (саме це і був спам огірками)
+    before = len(bot.sent)
+    await reminders.evening_digest(Context(bot))
+    await reminders.evening_digest(Context(bot))
+    again = [s for s in bot.sent[before:] if s.startswith("🌙")]
+    assert not again, f"підсумок повторився {len(again)} раз(и) без нових подій"
+
+    # правило трьох днів закривається саме, без питання до батьків
+    assert not db.q("SELECT 1 FROM nudge WHERE done=0 AND kind='three_day' AND due_ts<=?",
+                    (db.now(),)), "three_day лишився відкритим"
+    nid = db.q1("SELECT id FROM nudge WHERE kind='reaction_check' ORDER BY id DESC LIMIT 1")
     if nid:
         await press(f"f:nudge:{nid['id']}:ok")
         assert db.q1("SELECT done FROM nudge WHERE id=?", (nid["id"],))["done"] == 1
-    print(f"нагадування: розіслано, відповідь закриває нагадування")
+    print(f"нагадування: один підсумок на добу, повтору немає, кнопка закриває")
 
     # ── редагування дати ──
     await press("f:editbirth")
