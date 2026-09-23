@@ -116,9 +116,12 @@ class Query:
     def __init__(self, bot, data):
         self.bot, self.data = bot, data
         self.last = ""
+        self.answered = False
 
     async def answer(self, text=None, show_alert=False):
-        return None
+        # Telegram приймає одну відповідь на натискання; другу (з алертом) губить мовчки
+        assert not self.answered, f"подвійний answer() на {self.data}"
+        self.answered = True
 
     async def edit_message_text(self, text, **kw):
         check_text(f"edit[{self.data}]", text)
@@ -206,14 +209,15 @@ async def main() -> None:
     print(f"прийом записано, введено {len(db.intro_map(child['id']))} продуктів, "
           f"нагадувань {len(nudges)}")
 
-    # ── ліміт 6 продуктів ──
+    # ── ліміт тарілки: зайвий продукт не додається, а алерт іде єдиною відповіддю ──
+    from feed.handlers import MAX_PLATE
     await press("f:new")
-    for code in list(catalog.products())[:8]:
+    for code in list(catalog.products())[:MAX_PLATE + 2]:
         await press(f"f:sel:{code}")
-    assert len(ctx.user_data["draft"]) == 6, ctx.user_data["draft"]
+    assert len(ctx.user_data["draft"]) == MAX_PLATE, ctx.user_data["draft"]
     await press("f:home")
     assert ctx.user_data["draft"] == []
-    print("ліміт тарілки 6 продуктів працює")
+    print(f"ліміт тарілки {MAX_PLATE} продуктів працює")
 
     # ── бібліотека: кожна група і КОЖНА картка ──
     await press("f:lib")

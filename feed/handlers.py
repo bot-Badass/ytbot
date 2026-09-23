@@ -16,6 +16,7 @@ from telegram.ext import ApplicationHandlerStop, ContextTypes
 from . import catalog, db, growth, search, suggest, ui
 
 log = logging.getLogger("feed")
+MAX_PLATE = 12                        # 6 не вистачало: каша+фрукти+олія+… легко дають 7-8
 
 DATE_RE = re.compile(r"^\s*(\d{1,2})[.\-/](\d{1,2})[.\-/](\d{4})\s*$")
 ISO_RE = re.compile(r"^\s*(\d{4})-(\d{1,2})-(\d{1,2})\s*$")
@@ -481,7 +482,8 @@ async def on_button(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     fid = child["family_id"]
     intro = db.intro_map(cid)
     show_rare = _rare(fid)
-    await query.answer()
+    if action not in ("sel", "frt"):  # ці відповідають самі: алерт/тост = єдина відповідь
+        await query.answer()
 
     if action == "home":
         context.user_data["draft"] = []
@@ -507,10 +509,12 @@ async def on_button(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if action == "sel":
         code = parts[2]
         d = _draft(context)
+        if code not in d and len(d) >= MAX_PLATE:
+            # другий answer() Telegram відкидає мовчки - тому алерт іде єдиною відповіддю
+            return await query.answer(f"У тарілці вже {MAX_PLATE} продуктів", show_alert=True)
+        await query.answer()
         if code in d:
             d.remove(code)
-        elif len(d) >= 6:
-            await query.answer("У тарілці вже 6 продуктів", show_alert=True)
         else:
             d.append(code)
         # лишаємось на тій самій вкладці: інакше вибір з холодильника викидав у «Овочі»
