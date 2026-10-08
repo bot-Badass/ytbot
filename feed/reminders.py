@@ -9,7 +9,7 @@
 from __future__ import annotations
 
 import logging
-from datetime import time
+from datetime import date, datetime, time
 
 from telegram import InlineKeyboardMarkup as M
 from telegram.constants import ParseMode
@@ -23,6 +23,7 @@ log = logging.getLogger("feed.reminders")
 DIGEST_AT = time(20, 30, tzinfo=ui.TZ)
 STALE_DAYS = 7      # недоставлене нагадування не висить у базі вічно
 ACTIVE_DAYS = 3     # про порожній день пишемо лише тим, хто справді веде щоденник
+VITD_AT = time(6, 30, tzinfo=ui.TZ)
 
 
 def _remind_on(family_id: int) -> bool:
@@ -105,10 +106,26 @@ async def _one(context: ContextTypes.DEFAULT_TYPE, child, now: int,
             db.close_nudge(nid)
 
 
+async def vitamin_d(context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Вітамін D через день. Вмикається рядками в kv, UI немає: vitd_from = перший
+    день (ISO), vitd_chat = кому слати. Не залежить від перемикача «remind»."""
+    today = datetime.now(ui.TZ).date()
+    for row in db.q("SELECT family_id, value FROM kv WHERE key='vitd_from'"):
+        try:
+            if (today - date.fromisoformat(row["value"])).days % 2:
+                continue
+            chat = db.get_kv(row["family_id"], "vitd_chat")
+            for chat_id in ([int(chat)] if chat else db.family_chats(row["family_id"])):
+                await _send(context, chat_id, "☀️ Нагадування: сьогодні вітамін D", None)
+        except Exception:
+            log.exception("вітамін D для родини %s не надіслано", row["family_id"])
+
+
 def install(app: Application) -> None:
     jq = app.job_queue
     if jq is None:
         log.warning("JobQueue недоступна - нагадувань не буде (постав APScheduler)")
         return
     jq.run_daily(evening_digest, time=DIGEST_AT, name="feed_evening")
+    jq.run_daily(vitamin_d, time=VITD_AT, name="feed_vitd")
     log.info("нагадування прикорму: один підсумок на родину о %s", DIGEST_AT.strftime("%H:%M"))
