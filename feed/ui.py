@@ -28,6 +28,12 @@ def plural(n: int, one: str, few: str, many: str) -> str:
     return f"{n} {many}"
 
 
+def bar(done: int, total: int, width: int = 8) -> str:
+    """Смужка прогресу ▰▰▱▱ як у зведенні."""
+    fill = round(width * done / total) if total else 0
+    return "▰" * fill + "▱" * (width - fill)
+
+
 def chips(*parts: str) -> str:
     """Рядок-підзаголовок під назвою екрана."""
     return "<p><i>" + " · ".join(x for x in parts if x) + "</i></p>"
@@ -126,9 +132,11 @@ def home(child, intro: dict) -> tuple[str, M]:
     parts = [f"<h3>👶 {esc(child['name'])} · {growth.age_text(birth_date(child))}</h3>",
              chips(f"етап {catalog.band_title(catalog.band_for(months))}"),
              "<table>"
-             f"<tr><td>Сьогодні</td><td>{today}</td></tr>"
-             f"<tr><td>Введено продуктів</td><td>{len(intro)} з {len(catalog.products())}</td></tr>"
-             f"<tr><td>Алергени</td><td>{allerg_in} з {len(allerg_all)}</td></tr>"
+             f"<tr><td>Сьогодні</td><td colspan=\"2\">{today}</td></tr>"
+             f"<tr><td>Введено</td><td>{bar(len(intro), len(catalog.products()))}</td>"
+             f"<td>{len(intro)}/{len(catalog.products())}</td></tr>"
+             f"<tr><td>Алергени</td><td>{bar(allerg_in, len(allerg_all))}</td>"
+             f"<td>{allerg_in}/{len(allerg_all)}</td></tr>"
              "</table>"]
     if watch:
         parts.append("<blockquote>👀 <b>Під наглядом:</b> "
@@ -746,9 +754,8 @@ def stats(child, intro: dict) -> tuple[str, M]:
     for g in catalog.GROUP_ORDER:
         items = catalog.by_group(g)
         done = sum(1 for p in items if p["code"] in intro)
-        fill = round(8 * done / len(items))
         body += (f"<tr><td>{catalog.GROUPS[g][0]} {catalog.GROUPS[g][1]}</td>"
-                 f"<td>{'▰' * fill}{'▱' * (8 - fill)}</td><td>{done}/{len(items)}</td></tr>")
+                 f"<td>{bar(done, len(items))}</td><td>{done}/{len(items)}</td></tr>")
 
     ts_from, _, _ = day_bounds(-6)
     _, ts_to, _ = day_bounds()
