@@ -4,9 +4,11 @@ from __future__ import annotations
 import functools
 import json
 import math
-from datetime import date
+from datetime import date, datetime
+from zoneinfo import ZoneInfo
 from pathlib import Path
 
+KYIV = ZoneInfo("Europe/Kyiv")   # вік і «сьогодні» за Києвом, не за UTC сервера
 WHO_PATH = Path(__file__).resolve().parent.parent / "data" / "who.json"
 
 
@@ -16,7 +18,7 @@ def _tables() -> dict:
 
 
 def age_days(birth: date, when: date | None = None) -> int:
-    return ((when or date.today()) - birth).days
+    return ((when or datetime.now(KYIV).date()) - birth).days
 
 
 def age_months(birth: date, when: date | None = None) -> int:

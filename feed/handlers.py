@@ -80,7 +80,7 @@ def _meal_day(context: ContextTypes.DEFAULT_TYPE) -> date | None:
 def _meal_ts(context: ContextTypes.DEFAULT_TYPE, kind: str) -> int | None:
     """None означає «зараз» - тоді add_meal сам поставить поточний час."""
     day = _meal_day(context)
-    if not day or day == date.today():
+    if not day or day == datetime.now(ui.TZ).date():
         return None
     moment = datetime.combine(day, time(MEAL_HOUR.get(kind, 12), 0), ui.TZ)
     return int(moment.timestamp())
@@ -104,7 +104,8 @@ def _parse_date(text: str) -> date | None:
         value = date(y, mo, d)
     except ValueError:
         return None
-    if value > date.today() or value < date.today() - timedelta(days=365 * 6):
+    today = datetime.now(ui.TZ).date()
+    if value > today or value < today - timedelta(days=365 * 6):
         return None
     return value
 
@@ -535,7 +536,7 @@ async def on_button(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         if choice == "ask":
             context.user_data["await"] = {"k": "mealdate"}
             return await _show(update, ui.MEAL_DATE_PROMPT)
-        back = date.today() - timedelta(days=int(choice))
+        back = datetime.now(ui.TZ).date() - timedelta(days=int(choice))
         context.user_data["day"] = back.isoformat()
         if not d:
             return await _show(update, *ui.draft(child, d, intro,
