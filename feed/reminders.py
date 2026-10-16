@@ -12,11 +12,10 @@ import logging
 from datetime import date, datetime, time
 
 from telegram import InlineKeyboardMarkup as M
-from telegram.constants import ParseMode
 from telegram.error import TelegramError
 from telegram.ext import Application, ContextTypes
 
-from . import catalog, db, suggest, ui
+from . import catalog, db, rich, suggest, ui
 
 log = logging.getLogger("feed.reminders")
 
@@ -32,7 +31,7 @@ def _remind_on(family_id: int) -> bool:
 
 async def _send(context: ContextTypes.DEFAULT_TYPE, chat_id: int, text: str, kb: M | None) -> bool:
     try:
-        await context.bot.send_message(chat_id, text, parse_mode=ParseMode.HTML, reply_markup=kb)
+        await rich.send(context.bot, chat_id, text, kb)
         return True
     except TelegramError as exc:
         log.warning("підсумок не доставлено %s: %s", chat_id, exc)

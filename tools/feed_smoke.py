@@ -22,42 +22,57 @@ from feed import db  # noqa: E402
 
 db.DB_PATH = Path(tempfile.mkdtemp()) / "smoke.sqlite3"
 
-from feed import catalog, growth, handlers, suggest, ui  # noqa: E402
+from feed import catalog, growth, handlers, rich, suggest, ui  # noqa: E402
+from telegram import InlineKeyboardMarkup as M  # noqa: E402
 from telegram.ext import ApplicationHandlerStop  # noqa: E402
 
-ALLOWED_TAGS = {"b", "i", "u", "s", "code", "pre", "a", "tg-spoiler", "br"}
+ALLOWED_TAGS = {"b", "i", "u", "s", "code", "pre", "a", "tg-spoiler", "br", "blockquote"}
+RICH_TAGS = ALLOWED_TAGS | {"strong", "em", "h1", "h2", "h3", "h4", "h5", "h6", "p", "ul", "ol", "li",
+                            "table", "tr", "td", "th", "details", "summary", "footer", "hr", "mark"}
+VOID_TAGS = {"br", "hr"}
 errors: list[str] = []
 screens = 0
 
 
 class Checker(html.parser.HTMLParser):
-    def __init__(self, where: str):
+    def __init__(self, where: str, allowed: set[str] = ALLOWED_TAGS):
         super().__init__()
         self.where = where
+        self.allowed = allowed
         self.stack: list[str] = []
 
     def handle_starttag(self, tag, attrs):
-        if tag not in ALLOWED_TAGS:
+        if tag not in self.allowed:
             errors.append(f"{self.where}: тег <{tag}> Telegram не приймає")
-        elif tag != "br":
+        elif tag not in VOID_TAGS:
             self.stack.append(tag)
 
     def handle_endtag(self, tag):
-        if tag == "br":
+        if tag in VOID_TAGS:
             return
         if not self.stack or self.stack.pop() != tag:
             errors.append(f"{self.where}: незакритий/зайвий </{tag}>")
 
 
-def check_text(where: str, text: str) -> None:
+def check_text(where: str, text: str, allowed: set[str] = ALLOWED_TAGS, limit: int = 4096) -> None:
     global screens
     screens += 1
-    if len(text) > 4096:
-        errors.append(f"{where}: {len(text)} символів, ліміт Telegram 4096")
-    p = Checker(where)
+    if len(text) > limit:
+        errors.append(f"{where}: {len(text)} символів, ліміт Telegram {limit}")
+    p = Checker(where, allowed)
     p.feed(text)
     if p.stack:
         errors.append(f"{where}: не закрито {p.stack}")
+
+
+def check_rich(where: str, html_: str) -> str:
+    """Rich-екран і його запасний звичайний варіант. Повертає запасний текст для асертів."""
+    check_text(f"{where}:rich", html_, RICH_TAGS, rich.RICH_LIMIT)
+    screens_before = screens
+    plain = rich.to_tg(html_)
+    check_text(f"{where}:plain", plain)
+    globals()["screens"] = screens_before
+    return plain
 
 
 widest = ("", 0, 0)
@@ -85,6 +100,21 @@ def check_kb(where: str, kb) -> None:
 class Bot:
     def __init__(self):
         self.sent: list[str] = []
+        self.next_id = 1
+
+    async def do_api_request(self, endpoint, api_kwargs=None, **kw):
+        a = api_kwargs or {}
+        where = f"{endpoint}"
+        text = check_rich(where, a["rich_message"]["html"])
+        check_kb(where, M.de_json(a["reply_markup"], None) if a.get("reply_markup") else None)
+        self.sent.append(text)
+        self.next_id += 1
+        return {"message_id": self.next_id}
+
+    async def edit_message_text(self, text, **kw):
+        check_text("bot.edit", text)
+        check_kb("bot.edit", kw.get("reply_markup"))
+        self.sent.append(text)
 
     async def send_message(self, chat_id, text, **kw):
         check_text("bot.send", text)
@@ -112,9 +142,14 @@ class Message:
         self.bot.sent.append(text)
 
 
+class _Msg:
+    message_id = 1
+
+
 class Query:
     def __init__(self, bot, data):
         self.bot, self.data = bot, data
+        self.message = _Msg()
         self.last = ""
         self.answered = False
 
@@ -141,6 +176,10 @@ class Update:
         self.message = Message(bot, text) if text is not None else None
         self.effective_user = user
         self.effective_chat = Chat(bot, user.id)
+        self._bot = bot
+
+    def get_bot(self):
+        return self._bot
 
 
 class Context:
@@ -485,7 +524,7 @@ async def main() -> None:
     from feed import reminders
     before = len(bot.sent)
     await reminders.evening_digest(Context(bot))
-    digests = [s for s in bot.sent[before:] if s.startswith("🌙")]
+    digests = [s for s in bot.sent[before:] if s.startswith("<b>🌙")]
     adults = len(db.family_chats(db.member(max_u.id)["family_id"]))
     assert len(digests) == adults, f"підсумків {len(digests)}, очікував по одному на дорослого"
     assert len(set(digests)) == 1, "дорослі отримали різні підсумки"
@@ -494,7 +533,7 @@ async def main() -> None:
     before = len(bot.sent)
     await reminders.evening_digest(Context(bot))
     await reminders.evening_digest(Context(bot))
-    again = [s for s in bot.sent[before:] if s.startswith("🌙")]
+    again = [s for s in bot.sent[before:] if s.startswith("<b>🌙")]
     assert not again, f"підсумок повторився {len(again)} раз(и) без нових подій"
 
     # правило трьох днів закривається саме, без питання до батьків

@@ -1,6 +1,7 @@
 """Екрани прикорму: текст + інлайн-клавіатури. Чистий рендер, без побічних ефектів."""
 from __future__ import annotations
 
+import re
 from datetime import date, datetime, timedelta
 from zoneinfo import ZoneInfo
 
@@ -8,6 +9,7 @@ from telegram import InlineKeyboardButton as B
 from telegram import InlineKeyboardMarkup as M
 
 from . import catalog, db, growth, suggest
+from .rich import Rich
 
 TZ = ZoneInfo("Europe/Kyiv")
 
@@ -15,6 +17,20 @@ TZ = ZoneInfo("Europe/Kyiv")
 
 def esc(text: str) -> str:
     return str(text).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+
+
+def plural(n: int, one: str, few: str, many: str) -> str:
+    """3 прийоми, 5 прийомів, 21 прийом."""
+    if n % 10 == 1 and n % 100 != 11:
+        return f"{n} {one}"
+    if 2 <= n % 10 <= 4 and not 12 <= n % 100 <= 14:
+        return f"{n} {few}"
+    return f"{n} {many}"
+
+
+def chips(*parts: str) -> str:
+    """Рядок-підзаголовок під назвою екрана."""
+    return "<p><i>" + " · ".join(x for x in parts if x) + "</i></p>"
 
 
 def local(ts: int) -> datetime:
@@ -102,28 +118,33 @@ def home(child, intro: dict) -> tuple[str, M]:
     meals = db.meals_between(child["id"], ts_from, ts_to)
     eaten_today = {c for m in meals for c in db.meal_codes(m["id"])}
     watch = [c for c, r in intro.items() if r["status"] == "watch"]
+    allerg_all = [c for c, p in catalog.products().items() if p.get("allergen")]
+    allerg_in = sum(1 for c in allerg_all if c in intro)
 
-    lines = [
-        f"👶 <b>{esc(child['name'])}</b>, {growth.age_text(birth_date(child))}",
-        f"Етап: {catalog.band_title(catalog.band_for(months))}",
-        "",
-        f"Сьогодні: {len(meals)} прийом(и), {len(eaten_today)} продукт(и)",
-        f"Введено всього: {len(intro)} з {len(catalog.products())}",
-    ]
+    today = (f"{plural(len(meals), 'прийом', 'прийоми', 'прийомів')}, "
+             f"{plural(len(eaten_today), 'продукт', 'продукти', 'продуктів')}") if meals else "ще нічого"
+    parts = [f"<h3>👶 {esc(child['name'])} · {growth.age_text(birth_date(child))}</h3>",
+             chips(f"етап {catalog.band_title(catalog.band_for(months))}"),
+             "<table>"
+             f"<tr><td>Сьогодні</td><td>{today}</td></tr>"
+             f"<tr><td>Введено продуктів</td><td>{len(intro)} з {len(catalog.products())}</td></tr>"
+             f"<tr><td>Алергени</td><td>{allerg_in} з {len(allerg_all)}</td></tr>"
+             "</table>"]
     if watch:
-        lines.append("Під наглядом: " + ", ".join(catalog.label(c) for c in watch[:4]))
+        parts.append("<blockquote>👀 <b>Під наглядом:</b> "
+                     + ", ".join(catalog.label(c) for c in watch[:4]) + "</blockquote>")
 
     stock = len(db.pantry_codes(child["family_id"]))
     fridge = f" · {stock}" if stock else ""
     kb = M([
-        [B("🍽 Записати прийом їжі", callback_data="f:new")],
+        [B("🍽 Записати прийом їжі", callback_data="f:new", style="success")],
         [B(f"🧊 Холодильник{fridge}", callback_data="f:fr"),
-         B("🎯 Що ввести далі", callback_data="f:next")],
+         B("🎯 Що ввести далі", callback_data="f:next", style="primary")],
         [B("🥕 Продукти", callback_data="f:lib"), B("👨‍🍳 Рецепти", callback_data="f:rec")],
         [B("📔 Щоденник", callback_data="f:diary"), B("📈 Зростання", callback_data="f:grow")],
         [B("ℹ️ Інструкція", callback_data="f:guide"), B("⚙️ Налаштування", callback_data="f:set")],
     ])
-    return "\n".join(lines), kb
+    return Rich("".join(parts)), kb
 
 
 # ─────────────────────── конструктор тарілки ───────────────────────
@@ -241,20 +262,19 @@ def after_save(child, intro: dict, fresh: list[str]) -> tuple[str, M]:
     """Окреме повідомлення після запису: попередження і навігація."""
     if not fresh:
         return home(child, intro)
-    lines = ["🆕 <b>Нові продукти</b>: " + ", ".join(catalog.label(c) for c in fresh),
-             "",
-             "Правило трьох днів: тримаємо новий продукт у меню 2-3 дні поспіль "
-             "і не вводимо інший новий, щоб реакцію було видно однозначно.",
-             "Нагадаю ввечері спитати, як пройшло."]
+    parts = ["<h4>🆕 Нові продукти: " + ", ".join(catalog.label(c) for c in fresh) + "</h4>",
+             "<p>Правило трьох днів: тримаємо новий продукт у меню 2-3 дні поспіль "
+             "і не вводимо інший новий, щоб реакцію було видно однозначно.</p>",
+             "<p>Нагадаю ввечері спитати, як пройшло.</p>"]
     for c in fresh:
         prod = catalog.product(c)
         if prod and prod.get("allergen"):
-            lines.append(f"⚠️ {prod['emoji']} {prod['name']} - алерген ({prod['allergen']}). "
-                         "Наступні рази давати регулярно, не відкладати.")
-    rows = _rows([B(f"⚠️ Реакція: {catalog.label(c)}",
-                    callback_data=f"f:react:{c}") for c in fresh], 1)
+            parts.append(f"<blockquote>⚠️ {prod['emoji']} <b>{esc(prod['name'])}</b> - алерген "
+                         f"({esc(prod['allergen'])}). Наступні рази давати регулярно, не відкладати.</blockquote>")
+    rows = _rows([B(f"⚠️ Реакція: {catalog.label(c)}", callback_data=f"f:react:{c}", style="danger")
+                  for c in fresh], 1)
     rows.append([B("📔 Щоденник", callback_data="f:diary"), B("🏠 Головна", callback_data="f:home")])
-    return "\n".join(lines), M(rows)
+    return Rich("".join(parts)), M(rows)
 
 
 # ─────────────────────────── бібліотека ───────────────────────────
@@ -309,44 +329,47 @@ def card(child, code: str, intro: dict) -> tuple[str, M]:
     band = catalog.band_for(months)
     row = intro.get(code)
 
-    head = [f"{p['emoji']} <b>{esc(p['name'])}</b>{catalog.mark_allergen(code)}"]
     meta = [f"з {p['from_month']} міс", f"ризик подавитися: {catalog.CHOKING[p['choking']]}"]
     if p.get("allergen"):
-        meta.append(f"⚠️ алерген: {p['allergen']}")
-    head.append(" · ".join(meta))
+        meta.append(f"⚠️ алерген: {esc(p['allergen'])}")
+    parts = [f"<h3>{p['emoji']} {esc(p['name'])}{catalog.mark_allergen(code)}</h3>", chips(*meta)]
     if p["from_month"] > months:
-        head.append(f"⏳ Для {esc(child['name'])} ще зарано - рекомендовано з {p['from_month']} місяців.")
-    head.append("")
+        parts.append(f"<blockquote>⏳ Для {esc(child['name'])} ще зарано - рекомендовано "
+                     f"з {p['from_month']} місяців.</blockquote>")
 
-    head.append("<b>Як подавати зараз</b>")
-    head.append(esc(p["serve"][band]))
-    head.append("")
-    for key, lo, hi, title in catalog.AGE_BANDS:
-        if key != band:
-            head.append(f"<i>{title}:</i> {esc(p['serve'][key])}")
+    band_title = next(t for k, lo, hi, t in catalog.AGE_BANDS if k == band)
+    parts.append(f"<h4>Як подавати зараз · {esc(band_title)}</h4><p>{esc(p['serve'][band])}</p>")
     if p.get("cook"):
-        head.append("")
-        head.append(f"<b>⏱ Готування.</b> {esc(p['cook'])}")
-    head.append("")
+        steps = [x.strip() for x in re.split(r"(?<=\.)\s+(?=[А-ЯІЇЄҐ⚠])", p["cook"]) if x.strip()]
+        parts.append("<h4>⏱ Готування</h4>" + (
+            "<ul>" + "".join(f"<li>{esc(x)}</li>" for x in steps) + "</ul>" if len(steps) > 1
+            else f"<p>{esc(p['cook'])}</p>"))
     if p.get("benefit"):
-        head.append(f"<b>Користь.</b> {esc(p['benefit'])}")
+        parts.append(f"<h4>Користь</h4><p>{esc(p['benefit'])}</p>")
     if p.get("caution"):
-        head.append(f"<b>⚠️ Обережно.</b> {esc(p['caution'])}")
+        parts.append(f"<blockquote><b>⚠️ Обережно.</b> {esc(p['caution'])}</blockquote>")
+    others = [(t, p["serve"][k]) for k, lo, hi, t in catalog.AGE_BANDS if k != band]
+    if others:
+        parts.append("<details><summary>Інший вік</summary><table>"
+                     + "".join(f"<tr><td>{esc(t)}</td><td>{esc(v)}</td></tr>" for t, v in others)
+                     + "</table></details>")
 
+    foot = []
     if row:
         emoji_s, label_s = catalog.STATUS[row["status"]]
-        head.append("")
-        head.append(f"{emoji_s} Статус: {label_s} · перший раз "
-                    f"{local(row['first_ts']).strftime('%d.%m.%Y')} · разів: {row['times']}")
+        foot.append(f"{emoji_s} {label_s} · перший раз {local(row['first_ts']).strftime('%d.%m.%Y')} · "
+                    + plural(row["times"], "раз", "рази", "разів"))
     rx = [r for r in db.reactions(child["id"], 50) if r["code"] == code]
     if rx:
-        head.append("Реакції: " + ", ".join(
+        foot.append("Реакції: " + ", ".join(
             f"{catalog.REACTION_LABEL.get(r['kind'], r['kind'])} ({local(r['ts']).strftime('%d.%m')})"
             for r in rx[:3]))
+    if foot:
+        parts.append("<footer>" + "<br>".join(foot) + "</footer>")
 
     rows = [
-        [B("🍽 Подали зараз", callback_data=f"f:quick:{code}")],
-        [B("⚠️ Реакція", callback_data=f"f:react:{code}")],
+        [B("🍽 Подали зараз", callback_data=f"f:quick:{code}", style="success")],
+        [B("⚠️ Реакція", callback_data=f"f:react:{code}", style="danger")],
     ]
     st_row = []
     if not row or row["status"] != "ok":
@@ -360,7 +383,7 @@ def card(child, code: str, intro: dict) -> tuple[str, M]:
     back_key = catalog.key_of(code)
     rows.append([B(f"‹ {catalog.key_title(back_key)[1]}", callback_data=f"f:lg:{back_key}"),
                  B("🏠 Головна", callback_data="f:home")])
-    return "\n".join(head), M(rows)
+    return Rich("".join(parts)), M(rows)
 
 
 # ─────────────────────────── реакції ───────────────────────────
@@ -659,26 +682,24 @@ def recipes_from_fridge(child, stock: list[str]) -> tuple[str, M]:
 def recipe_card(child, rid: str, stock: list[str] | None = None) -> tuple[str, M]:
     r = catalog.recipe(rid)
     months = months_of(child)
-    lines = [f"{r['emoji']} <b>{esc(r['title'])}</b>",
-             f"з {r['age_from']} міс · {esc(r['time'])}"]
+    parts = [f"<h3>{r['emoji']} {esc(r['title'])}</h3>", chips(f"з {r['age_from']} міс", f"⏱ {esc(r['time'])}")]
     if r["age_from"] > months:
-        lines.append(f"⏳ Для {esc(child['name'])} ще зарано: страва розрахована на "
-                     f"{r['age_from']} місяців.")
+        parts.append(f"<blockquote>⏳ Для {esc(child['name'])} ще зарано: страва розрахована на "
+                     f"{r['age_from']} місяців.</blockquote>")
     if stock:
         have, missing = catalog.recipe_missing(rid, stock)
         if have and not missing:
-            lines.append("🧊 Усе є вдома.")
+            parts.append("<p>🧊 Усе є вдома.</p>")
         elif have:
-            lines.append("🧊 Є вдома: " + ", ".join(catalog.name(c) for c in have)
-                         + ". Бракує: " + ", ".join(catalog.name(c) for c in missing) + ".")
-    lines += ["", "<b>Інгредієнти</b>"]
-    lines += [f"· {esc(i)}" for i in r["ingredients"]]
-    lines += ["", "<b>Як готувати</b>"]
-    lines += [f"{n}. {esc(s)}" for n, s in enumerate(r["steps"], 1)]
-    lines += ["", f"<b>💡 Порада.</b> {esc(r['tips'])}", f"<b>❄️ Заморозка.</b> {esc(r['freeze'])}"]
-    rows = [[B("🍽 Подали цю страву", callback_data=f"f:ru:{rid}")],
+            parts.append("<p>🧊 Є вдома: " + ", ".join(catalog.name(c) for c in have)
+                         + ". Бракує: " + ", ".join(catalog.name(c) for c in missing) + ".</p>")
+    parts.append("<h4>Інгредієнти</h4><ul>" + "".join(f"<li>{esc(i)}</li>" for i in r["ingredients"]) + "</ul>")
+    parts.append("<h4>Як готувати</h4><ol>" + "".join(f"<li>{esc(x)}</li>" for x in r["steps"]) + "</ol>")
+    parts.append(f"<blockquote><b>💡 Порада.</b> {esc(r['tips'])}</blockquote>")
+    parts.append(f"<details><summary>❄️ Заморозка</summary><p>{esc(r['freeze'])}</p></details>")
+    rows = [[B("🍽 Подали цю страву", callback_data=f"f:ru:{rid}", style="success")],
             [B("‹ Рецепти", callback_data="f:rec"), B("🏠 Головна", callback_data="f:home")]]
-    return "\n".join(lines), M(rows)
+    return Rich("".join(parts)), M(rows)
 
 
 # ─────────────────────────── щоденник ───────────────────────────
@@ -687,95 +708,110 @@ def recipe_card(child, rid: str, stock: list[str] | None = None) -> tuple[str, M
 def diary(child, offset: int = 0) -> tuple[str, M]:
     ts_from, ts_to, day = day_bounds(offset)
     meals = db.meals_between(child["id"], ts_from, ts_to)
-    label = "Сьогодні" if offset == 0 else "Вчора" if offset == -1 else day.strftime("%d.%m.%Y")
-    lines = [f"📔 <b>Щоденник · {label}</b>", ""]
-    if not meals:
-        lines.append("Записів немає.")
+    label = "сьогодні" if offset == 0 else "вчора" if offset == -1 else day.strftime("%d.%m.%Y")
+    parts = [f"<h3>📔 Щоденник · {label}</h3>"]
     rows: list[list[B]] = []
-    for m in meals:
-        codes = db.meal_codes(m["id"])
-        lines.append(f"{local(m['ts']).strftime('%H:%M')} · {catalog.MEAL_LABEL.get(m['kind'], m['kind'])}")
-        lines.append("   " + ", ".join(catalog.label(c) for c in codes))
-        if m["note"]:
-            lines.append(f"   <i>{esc(m['note'])}</i>")
-        rows.append([B(f"🗑 {local(m['ts']).strftime('%H:%M')}", callback_data=f"f:mdel:{m['id']}"),
-                     B(f"📝 нотатка", callback_data=f"f:mnote:{m['id']}")])
+    if not meals:
+        parts.append("<p>Записів немає.</p>")
+    else:
+        body = ""
+        codes_all: set[str] = set()
+        for m in meals:
+            codes = db.meal_codes(m["id"])
+            codes_all.update(codes)
+            what = ", ".join(catalog.label(c) for c in codes)
+            if m["note"]:
+                what += f"<br><i>{esc(m['note'])}</i>"
+            body += (f"<tr><td>{local(m['ts']).strftime('%H:%M')}</td>"
+                     f"<td>{catalog.MEAL_LABEL.get(m['kind'], m['kind'])}</td><td>{what}</td></tr>")
+            rows.append([B(f"🗑 {local(m['ts']).strftime('%H:%M')}", callback_data=f"f:mdel:{m['id']}"),
+                         B("📝 нотатка", callback_data=f"f:mnote:{m['id']}")])
+        parts.append("<table><tr><th>Час</th><th>Прийом</th><th>Що їли</th></tr>" + body + "</table>")
+        parts.append("<footer>" + plural(len(meals), "прийом", "прийоми", "прийомів") + " · "
+                     + plural(len(codes_all), "продукт", "продукти", "продуктів") + "</footer>")
     nav = [B("‹ Раніше", callback_data=f"f:diary:{offset - 1}")]
     if offset < 0:
         nav.append(B("Пізніше ›", callback_data=f"f:diary:{offset + 1}"))
     rows.append(nav)
     rows.append([B("⚠️ Реакції", callback_data="f:rxlog"), B("📊 Зведення", callback_data="f:stats")])
     rows.append([B("🏠 Головна", callback_data="f:home")])
-    return "\n".join(lines), M(rows)
+    return Rich("".join(parts)), M(rows)
 
 
 def stats(child, intro: dict) -> tuple[str, M]:
     months = months_of(child)
     total = len(catalog.products())
-    by_group_done = []
+    body = ""
     for g in catalog.GROUP_ORDER:
         items = catalog.by_group(g)
         done = sum(1 for p in items if p["code"] in intro)
-        bar = "▰" * round(8 * done / len(items)) + "▱" * (8 - round(8 * done / len(items)))
-        by_group_done.append(f"{catalog.GROUPS[g][0]} {bar} {done}/{len(items)} {catalog.GROUPS[g][1]}")
+        fill = round(8 * done / len(items))
+        body += (f"<tr><td>{catalog.GROUPS[g][0]} {catalog.GROUPS[g][1]}</td>"
+                 f"<td>{'▰' * fill}{'▱' * (8 - fill)}</td><td>{done}/{len(items)}</td></tr>")
 
     ts_from, _, _ = day_bounds(-6)
     _, ts_to, _ = day_bounds()
     week = db.meals_between(child["id"], ts_from, ts_to)
     week_codes = {c for m in week for c in db.meal_codes(m["id"])}
-    allerg_intro = [c for c in intro if catalog.product(c) and catalog.product(c).get("allergen")]
     allerg_all = [c for c, p in catalog.products().items() if p.get("allergen")]
+    allerg_intro = [c for c in allerg_all if c in intro]
 
-    lines = [f"📊 <b>Зведення</b>", "",
-             f"Введено {len(intro)} з {total} продуктів", ""]
-    lines += by_group_done
-    lines += ["", f"За 7 днів: {len(week)} прийом(и), {len(week_codes)} різних продуктів",
-              f"Алергени введено: {len(allerg_intro)} з {len(allerg_all)}"]
-    missing = [c for c in allerg_all if c not in intro
-               and catalog.product(c)["from_month"] <= months]
+    parts = ["<h3>📊 Зведення</h3>",
+             chips(f"введено {len(intro)} з {total}",
+                   "за 7 днів " + plural(len(week), "прийом", "прийоми", "прийомів") + ", "
+                   + plural(len(week_codes), "продукт", "продукти", "продуктів")),
+             "<table>" + body + "</table>",
+             f"<h4>❗ Алергени · {len(allerg_intro)} з {len(allerg_all)}</h4>"]
+    missing = [c for c in allerg_all if c not in intro and catalog.product(c)["from_month"] <= months]
     if missing:
-        lines.append("Ще не пробували: " + ", ".join(catalog.label(c) for c in missing))
-        lines.append("<i>Алергени вводять рано і потім регулярно - відкладання підвищує ризик алергії.</i>")
-    return "\n".join(lines), M([[B("‹ Щоденник", callback_data="f:diary"),
-                                 B("🏠 Головна", callback_data="f:home")]])
+        by_key: dict[str, list[str]] = {}
+        for c in missing:
+            by_key.setdefault(catalog.key_title(catalog.key_of(c))[1], []).append(catalog.label(c))
+        parts.append(f"<details><summary>Ще не пробували · {len(missing)}</summary><ul>"
+                     + "".join(f"<li><b>{esc(k)}:</b> {', '.join(v)}</li>" for k, v in by_key.items())
+                     + "</ul></details>")
+        parts.append("<footer>Алергени вводять рано і потім регулярно - відкладання підвищує ризик алергії.</footer>")
+    rows = []
+    if missing:
+        rows.append([B("🎯 Що ввести далі", callback_data="f:next", style="primary")])
+    rows.append([B("‹ Щоденник", callback_data="f:diary"), B("🏠 Головна", callback_data="f:home")])
+    return Rich("".join(parts)), M(rows)
 
 
 # ─────────────────────────── зростання ───────────────────────────
 
 
 def growth_screen(child) -> tuple[str, M]:
-    days = growth.age_days(birth_date(child))
     sex = child["sex"]
-    lines = [f"📈 <b>Зростання · {esc(child['name'])}</b>",
-             f"{growth.age_text(birth_date(child))}", ""]
+    parts = [f"<h3>📈 Зростання · {esc(child['name'])}</h3>", chips(growth.age_text(birth_date(child)))]
     w = db.last_measure(child["id"], "weight_kg")
     h = db.last_measure(child["id"], "height_cm")
     if w:
         d = growth.age_days(birth_date(child), local(w["ts"]).date())
-        lines += [f"<b>Вага</b> · вимір {local(w['ts']).strftime('%d.%m.%Y')}",
-                  growth.summary(sex, "wfa", d, w["weight_kg"], "кг"), ""]
+        parts.append(f"<h4>Вага · {local(w['ts']).strftime('%d.%m.%Y')}</h4>"
+                     f"<p>{growth.summary(sex, 'wfa', d, w['weight_kg'], 'кг')}</p>")
     if h:
         d = growth.age_days(birth_date(child), local(h["ts"]).date())
-        lines += [f"<b>Зріст</b> · вимір {local(h['ts']).strftime('%d.%m.%Y')}",
-                  growth.summary(sex, "lhfa", d, h["height_cm"], "см"), ""]
+        parts.append(f"<h4>Зріст · {local(h['ts']).strftime('%d.%m.%Y')}</h4>"
+                     f"<p>{growth.summary(sex, 'lhfa', d, h['height_cm'], 'см')}</p>")
     if not w and not h:
-        lines.append("Ще немає вимірів. Додайте вагу і зріст - покажу перцентиль за ВООЗ.")
+        parts.append("<p>Ще немає вимірів. Додайте вагу і зріст - покажу перцентиль за ВООЗ.</p>")
 
-    hist = [m for m in db.measures(child["id"], 10)]
+    hist = db.measures(child["id"], 10)
     if len(hist) > 1:
-        lines.append("<b>Історія</b>")
-        for m in hist:
-            parts = []
-            if m["weight_kg"]:
-                parts.append(f"{m['weight_kg']:.2f} кг")
-            if m["height_cm"]:
-                parts.append(f"{m['height_cm']:.1f} см")
-            lines.append(f"{local(m['ts']).strftime('%d.%m.%Y')} · " + ", ".join(parts))
-    lines += ["", "<i>Перцентиль - це не оцінка. Стабільний коридор важливіший за саме число.</i>"]
+        def cells(m) -> str:
+            kg = f"{m['weight_kg']:.2f} кг" if m["weight_kg"] else ""
+            cm = f"{m['height_cm']:.1f} см" if m["height_cm"] else ""
+            return f"<tr><td>{local(m['ts']).strftime('%d.%m.%Y')}</td><td>{kg}</td><td>{cm}</td></tr>"
+        body = "".join(cells(m) for m in hist)
+        parts.append("<details><summary>Історія вимірів</summary><table>"
+                     "<tr><th>Дата</th><th>Вага</th><th>Зріст</th></tr>" + body + "</table></details>")
+    parts.append("<footer>Перцентиль - це не оцінка. Стабільний коридор важливіший за саме число.</footer>")
 
-    rows = [[B("⚖️ Додати вагу", callback_data="f:gw"), B("📏 Додати зріст", callback_data="f:gh")],
+    rows = [[B("⚖️ Додати вагу", callback_data="f:gw", style="primary"),
+             B("📏 Додати зріст", callback_data="f:gh", style="primary")],
             [B("🏠 Головна", callback_data="f:home")]]
-    return "\n".join(lines), M(rows)
+    return Rich("".join(parts)), M(rows)
 
 
 # ─────────────────────────── налаштування ───────────────────────────
@@ -1012,55 +1048,51 @@ def next_up(child, intro: dict, items: list[tuple[str, str]], hold: list[str],
     """Головна підказка бота: один наступний продукт, і чому саме він."""
     months = months_of(child)
     total = len(catalog.products())
-    lines = ["🎯 <b>Що ввести далі</b>",
-             f"{esc(child['name'])}, {growth.age_text(birth_date(child))} · "
-             f"введено {len(intro)} з {total}", ""]
+    parts = ["<h3>🎯 Що ввести далі</h3>",
+             chips(f"{esc(child['name'])}, {growth.age_text(birth_date(child))}", f"введено {len(intro)} з {total}")]
     rows: list[list[B]] = []
 
     if hold:
         now_ts = db.now()
-        lines.append("⏳ <b>Зараз новий продукт вводити рано.</b>")
+        lis = ""
         for code in hold[:3]:
             row = intro[code]
             days = max((now_ts - row["first_ts"]) // 86400 + 1, 1)
             state = "під наглядом після реакції" if row["status"] == "watch" else f"день {days} з 3"
-            lines.append(f"· {catalog.label(code)} - {state}")
-        lines += ["", "Правило трьох днів: новий продукт тримаємо в меню 2-3 дні поспіль і "
-                  "не додаємо поруч інший новий, інакше не зрозуміло, на що була реакція.",
-                  "", "Коли переносить добре - познач «освоєно», і я одразу підкажу наступний."]
-        rows += [[B(f"✅ Освоєно: {catalog.name(c)}", callback_data=f"f:st:{c}:ok"),
-                  B("⚠️ Реакція", callback_data=f"f:react:{c}")] for c in hold[:3]]
+            lis += f"<li>{catalog.label(code)} - {state}</li>"
+        parts += ["<h4>⏳ Зараз новий продукт вводити рано</h4>", f"<ul>{lis}</ul>",
+                  "<p>Правило трьох днів: новий продукт тримаємо в меню 2-3 дні поспіль і "
+                  "не додаємо поруч інший новий, інакше не зрозуміло, на що була реакція.</p>",
+                  "<footer>Коли переносить добре - познач «освоєно», і я одразу підкажу наступний.</footer>"]
+        rows += [[B(f"✅ Освоєно: {catalog.name(c)}", callback_data=f"f:st:{c}:ok", style="success"),
+                  B("⚠️ Реакція", callback_data=f"f:react:{c}", style="danger")] for c in hold[:3]]
         rows.append([B("🍽 Записати прийом їжі", callback_data="f:new"),
                      B("🏠 Головна", callback_data="f:home")])
-        return "\n".join(lines), M(rows)
+        return Rich("".join(parts)), M(rows)
 
     if not items:
-        lines.append("За віком уже введено все, що бот знає. Далі просто тримаємо "
-                     "різноманіття: щодня рослинне, вуглевод, білок і жир.")
+        parts.append("<p>За віком уже введено все, що бот знає. Далі просто тримаємо "
+                     "різноманіття: щодня рослинне, вуглевод, білок і жир.</p>")
         rows.append([B("🍲 Ідеї тарілок", callback_data="f:plates"),
                      B("🏠 Головна", callback_data="f:home")])
-        return "\n".join(lines), M(rows)
+        return Rich("".join(parts)), M(rows)
 
-    lines.append("Порядок такий: спершу алергени, далі те, чого в раціоні найменше.")
-    lines.append("")
+    parts.append("<p>Порядок такий: спершу алергени, далі те, чого в раціоні найменше.</p>")
     for code, why in items:
         prod = catalog.product(code)
-        lines.append(f"{prod['emoji']} <b>{esc(prod['name'])}</b>{catalog.mark_allergen(code)} "
-                     f"· з {prod['from_month']} міс")
-        lines.append(f"   <i>{esc(why)}</i>")
-        lines.append(f"   {esc(catalog.serving(code, months))}")
-        lines.append("")
-    lines.append("<i>Вводимо по одному і тримаємо 2-3 дні поспіль.</i>")
+        parts.append(f"<h4>{prod['emoji']} {esc(prod['name'])}{catalog.mark_allergen(code)} · з {prod['from_month']} міс</h4>"
+                     f"<p><i>{esc(why)}</i></p><p>{esc(catalog.serving(code, months))}</p>")
+    parts.append("<footer>Вводимо по одному і тримаємо 2-3 дні поспіль.</footer>")
 
     for code, _ in items:
-        rows.append([B(f"🍽 Подали: {catalog.name(code)}", callback_data=f"f:quick:{code}"),
+        rows.append([B(f"🍽 Подали: {catalog.name(code)}", callback_data=f"f:quick:{code}", style="success"),
                      B("🥕 Картка", callback_data=f"f:p:{code}")])
     fresh = [c for c, _ in items if c not in stock]
     if fresh:
         rows.append([B("🧊 Додати в холодильник", callback_data="f:nxfr")])
     rows.append([B("🛒 Покупки на тиждень", callback_data="f:frbuy"),
                  B("🏠 Головна", callback_data="f:home")])
-    return "\n".join(lines), M(rows)
+    return Rich("".join(parts)), M(rows)
 
 
 # ─────────────────────────── інструкція ───────────────────────────
@@ -1255,37 +1287,34 @@ def evening_digest(child, ask: list[tuple[int, str]], mastered: list[str],
     Свідомо коротка: її читають увечері з телефона, і вона має закриватися
     одним тапом або взагалі не вимагати дії.
     """
-    lines = [f"🌙 <b>{esc(child['name'])}: підсумок дня</b>", ""]
-
+    parts = [f"<h3>🌙 {esc(child['name'])}: підсумок дня</h3>"]
     if ask:
         names = ", ".join(catalog.label(c) for _, c in ask)
-        lines += [f"🆕 Уперше сьогодні: {names}.",
-                  "Як пройшло? Висип, червоні щоки, живіт, стілець - якщо щось "
-                  "впало в око, познач.", ""]
+        parts += [f"<h4>🆕 Уперше сьогодні: {names}</h4>",
+                  "<p>Як пройшло? Висип, червоні щоки, живіт, стілець - якщо щось "
+                  "впало в око, познач.</p>"]
     if mastered:
         names = ", ".join(catalog.label(c) for c in mastered)
-        lines.append(f"✅ Три дні без реакцій, рахую освоєними: {names}.")
+        parts.append(f"<p>✅ Три дні без реакцій, рахую освоєними: {names}.</p>")
         if can_next:
-            lines.append("Карантин знято - можна вводити новий продукт.")
-        lines.append("")
+            parts.append("<p>Карантин знято - можна вводити новий продукт.</p>")
     if show_record:
-        lines += ["📭 За сьогодні записів немає. Якщо їли - додай, поки памʼятаєш. "
-                  "Якщо був день на молоці, просто пропусти.", ""]
+        parts.append("<p>📭 За сьогодні записів немає. Якщо їли - додай, поки памʼятаєш. "
+                     "Якщо був день на молоці, просто пропусти.</p>")
 
     rows: list[list[B]] = []
     for nid, code in ask:
         p = catalog.product(code)
         name = p["name"] if p else code
-        rows.append([B(f"✅ {name} - добре", callback_data=f"f:nudge:{nid}:ok"),
-                     B("⚠️ Була реакція", callback_data=f"f:nudge:{nid}:react")])
+        rows.append([B(f"✅ {name} - добре", callback_data=f"f:nudge:{nid}:ok", style="success"),
+                     B("⚠️ Була реакція", callback_data=f"f:nudge:{nid}:react", style="danger")])
     for code in mastered:
         p = catalog.product(code)
         name = p["name"] if p else code
         rows.append([B(f"⚠️ {name} - все ж була реакція", callback_data=f"f:react:{code}")])
     if can_next and not ask:
-        rows.append([B("➕ Що вводити далі", callback_data="f:next")])
+        rows.append([B("➕ Що вводити далі", callback_data="f:next", style="primary")])
     if show_record:
-        rows.append([B("🍽 Записати", callback_data="f:new")])
+        rows.append([B("🍽 Записати", callback_data="f:new", style="success")])
     rows.append([B("🔕 Не нагадувати", callback_data="f:rem")])
-
-    return "\n".join(lines).strip(), M(rows)
+    return Rich("".join(parts)), M(rows)

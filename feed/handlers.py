@@ -10,10 +10,9 @@ from telegram import InlineKeyboardButton as B
 from telegram import InlineKeyboardMarkup as M
 from telegram import ReplyKeyboardRemove, Update
 from telegram.constants import ParseMode
-from telegram.error import TelegramError
 from telegram.ext import ApplicationHandlerStop, ContextTypes
 
-from . import catalog, db, growth, search, suggest, ui
+from . import catalog, db, growth, rich, search, suggest, ui
 
 log = logging.getLogger("feed")
 MAX_PLATE = 12                        # 6 не вистачало: каша+фрукти+олія+… легко дають 7-8
@@ -27,19 +26,18 @@ NUM_RE = re.compile(r"^\s*(\d{1,3}(?:[.,]\d{1,2})?)\s*$")
 
 
 async def _show(update: Update, text: str, kb: M | None = None) -> None:
-    """Малює екран: редагує повідомлення з кнопкою або шле нове."""
+    """Малює екран: редагує повідомлення з кнопкою або шле нове. Усе rich, див. feed/rich.py."""
+    bot = update.get_bot()
+    chat_id = update.effective_chat.id
     query = update.callback_query
-    if query:
-        try:
-            await query.edit_message_text(text, parse_mode=ParseMode.HTML, reply_markup=kb,
-                                          disable_web_page_preview=True)
-            return
-        except TelegramError as exc:
-            if "not modified" in str(exc).lower():
-                return
-    chat = update.effective_chat
-    await chat.send_message(text, parse_mode=ParseMode.HTML, reply_markup=kb,
-                            disable_web_page_preview=True)
+    if query and query.message and await rich.edit(bot, chat_id, query.message.message_id, text, kb):
+        return
+    await rich.send(bot, chat_id, text, kb)
+
+
+async def _send(update: Update, text: str, kb: M | None = None) -> None:
+    """Новий екран окремим повідомленням (відповідь на текст, другий екран після запису)."""
+    await rich.send(update.get_bot(), update.effective_chat.id, text, kb)
 
 
 def track(update: Update, source: str = "") -> None:
@@ -240,7 +238,7 @@ async def on_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         child = db.child_of(user.id)
         t, kb = ui.home(child, db.intro_map(child["id"]))
         await update.message.reply_text(f"Оновив: {growth.age_text(value)}.")
-        await update.message.reply_text(t, parse_mode=ParseMode.HTML, reply_markup=kb)
+        await _send(update, t, kb)
         raise ApplicationHandlerStop
 
     if kind == "join":
@@ -257,7 +255,7 @@ async def on_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             raise ApplicationHandlerStop
         t, kb = ui.home(child, db.intro_map(child["id"]))
         await update.message.reply_text(f"Готово, ти в родині. Профіль: {child['name']}.")
-        await update.message.reply_text(t, parse_mode=ParseMode.HTML, reply_markup=kb)
+        await _send(update, t, kb)
         raise ApplicationHandlerStop
 
     child = db.child_of(user.id)
@@ -283,7 +281,7 @@ async def on_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
                 raise ApplicationHandlerStop
             db.add_measure(child["id"], user.id, height_cm=value)
         t, kb = ui.growth_screen(child)
-        await update.message.reply_text(t, parse_mode=ParseMode.HTML, reply_markup=kb)
+        await _send(update, t, kb)
         raise ApplicationHandlerStop
 
     if kind == "have":
@@ -299,7 +297,7 @@ async def on_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         intro = db.intro_map(child["id"])
         plates = suggest.complete(months, intro, found, 3)
         t_, kb = ui.have(child, found, plates, intro)
-        await update.message.reply_text(t_, parse_mode=ParseMode.HTML, reply_markup=kb)
+        await _send(update, t_, kb)
         raise ApplicationHandlerStop
 
     if kind == "fridge":
@@ -312,7 +310,7 @@ async def on_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             raise ApplicationHandlerStop
         added = db.pantry_add(child["family_id"], found, user.id)
         t_, kb = ui.fridge_added(added, [c for c in found if c not in added])
-        await update.message.reply_text(t_, parse_mode=ParseMode.HTML, reply_markup=kb)
+        await _send(update, t_, kb)
         raise ApplicationHandlerStop
 
     if kind == "rfind":
@@ -330,7 +328,7 @@ async def on_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             context.user_data["found"] = res["codes"]
             t_, kb = ui.search_result(child, text, res["codes"], res["recipes"],
                                       db.intro_map(child["id"]))
-        await update.message.reply_text(t_, parse_mode=ParseMode.HTML, reply_markup=kb)
+        await _send(update, t_, kb)
         raise ApplicationHandlerStop
 
     if kind == "mealdate":
@@ -345,10 +343,10 @@ async def on_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             t, kb = ui.home(child, db.intro_map(child["id"]))
             await update.message.reply_text(
                 f"Записую за {ui.day_label(value)}. Обери, що було в тарілці.")
-            await update.message.reply_text(t, parse_mode=ParseMode.HTML, reply_markup=kb)
+            await _send(update, t, kb)
             raise ApplicationHandlerStop
         t, kb = ui.pick_kind(d, value)
-        await update.message.reply_text(t, parse_mode=ParseMode.HTML, reply_markup=kb)
+        await _send(update, t, kb)
         raise ApplicationHandlerStop
 
     if kind == "mnote":
@@ -356,7 +354,7 @@ async def on_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
                (text[:300], pending["id"], child["id"]))
         context.user_data.pop("await", None)
         t, kb = ui.diary(child)
-        await update.message.reply_text(t, parse_mode=ParseMode.HTML, reply_markup=kb)
+        await _send(update, t, kb)
         raise ApplicationHandlerStop
 
     if kind == "rxnote":
@@ -365,7 +363,7 @@ async def on_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         context.user_data.pop("await", None)
         t, kb = ui.card(child, pending["code"], db.intro_map(child["id"]))
         await update.message.reply_text("Нотатку збережено.")
-        await update.message.reply_text(t, parse_mode=ParseMode.HTML, reply_markup=kb)
+        await _send(update, t, kb)
         raise ApplicationHandlerStop
 
     context.user_data.pop("await", None)
@@ -413,18 +411,15 @@ async def _record_and_continue(update: Update, context: ContextTypes.DEFAULT_TYP
     record = ui.meal_record(child, codes, kind, ts)
     query = update.callback_query
     posted = False
-    if query:
-        try:
-            await query.edit_message_text(record, parse_mode=ParseMode.HTML, reply_markup=None)
-            posted = True
-        except TelegramError as exc:
-            log.warning("не вдалось перетворити картку на запис: %s", exc)
+    if query and query.message:
+        posted = await rich.edit(update.get_bot(), update.effective_chat.id, query.message.message_id, record)
+        if not posted:
+            log.warning("не вдалось перетворити картку на запис")
     if not posted:
-        await update.effective_chat.send_message(record, parse_mode=ParseMode.HTML)
+        await _send(update, record)
 
     text, kb = ui.after_save(child, db.intro_map(child["id"]), fresh)
-    await update.effective_chat.send_message(text, parse_mode=ParseMode.HTML, reply_markup=kb,
-                                             disable_web_page_preview=True)
+    await _send(update, text, kb)
 
 
 # ─────────────────────────── роутер кнопок ───────────────────────────
@@ -470,7 +465,7 @@ async def on_button(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         child = db.child_of(user.id)
         text, kb = ui.home(child, db.intro_map(child["id"]))
         await _show(update, f"Профіль створено: {child['name']}, {growth.age_text(ui.birth_date(child))}.")
-        await update.effective_chat.send_message(text, parse_mode=ParseMode.HTML, reply_markup=kb)
+        await _send(update, text, kb)
         return
 
     got = await ensure(update, context)
@@ -829,7 +824,7 @@ async def on_free_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     if res["codes"] or res["recipes"]:
         context.user_data["found"] = res["codes"]
         text, kb = ui.search_result(child, query, res["codes"], res["recipes"], intro)
-        await update.message.reply_text(text, parse_mode=ParseMode.HTML, reply_markup=kb)
+        await _send(update, text, kb)
         return
     text, kb = ui.home(child, intro)
     await update.message.reply_text(
@@ -837,4 +832,4 @@ async def on_free_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         "«гарбуз» чи «гарбузовий суп» - і я покажу рецепти й підкажу тарілку. "
         "Посилання на YouTube працює як раніше.",
         reply_markup=ReplyKeyboardRemove())
-    await update.message.reply_text(text, parse_mode=ParseMode.HTML, reply_markup=kb)
+    await _send(update, text, kb)
