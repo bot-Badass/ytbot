@@ -324,6 +324,8 @@ def card(child, code: str, intro: dict) -> tuple[str, M]:
     for key, lo, hi, title in catalog.AGE_BANDS:
         if key != band:
             head.append(f"<i>{title}:</i> {esc(p['serve'][key])}")
+    if p.get("cook"):
+        head.append(f"<b>⏱ Готування.</b> {esc(p['cook'])}")
     head.append("")
     if p.get("benefit"):
         head.append(f"<b>Користь.</b> {esc(p['benefit'])}")
