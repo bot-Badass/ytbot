@@ -84,7 +84,8 @@ class _Flatten(html.parser.HTMLParser):
                 self.out.append("<pre>")
         elif tag == "blockquote":
             self._nl(2)
-            self.out.append("<blockquote>")
+            self.out.append("<blockquote expandable>" if any(k == "expandable" for k, _ in attrs)
+                            else "<blockquote>")
         elif tag == "footer":
             self._nl(2)
             self.out.append("<i>")
