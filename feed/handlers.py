@@ -46,6 +46,24 @@ def track(update: Update, source: str = "") -> None:
         db.touch_subscriber(update.effective_user, source)
     except Exception as exc:          # база підписників не має ламати відповідь
         log.warning("не вдалось записати підписника: %s", exc)
+    user = update.effective_user
+    if user is None:
+        return
+    try:                              # журнал дій: кнопки і команди, звичайний текст ні
+        if update.callback_query and update.callback_query.data:
+            data = update.callback_query.data
+            db.log_event(user.id, "btn", ":".join(data.split(":")[:2]), data)
+        elif update.message and (update.message.text or "").startswith("/"):
+            db.log_event(user.id, "cmd", update.message.text.split()[0])
+    except Exception as exc:
+        log.warning("не вдалось записати дію: %s", exc)
+
+
+def track_search(update: Update, text: str, hits: int) -> None:
+    try:
+        db.log_event(update.effective_user.id, "search", "search", text, hits)
+    except Exception as exc:
+        log.warning("не вдалось записати пошук: %s", exc)
 
 
 def _who(update: Update) -> str:
@@ -822,6 +840,7 @@ async def on_free_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     intro = db.intro_map(child["id"])
     query = update.message.text or ""
     res = search.find(query)
+    track_search(update, query, len(res["codes"]) + len(res["recipes"]))
     if res["codes"] or res["recipes"]:
         context.user_data["found"] = res["codes"]
         text, kb = ui.search_result(child, query, res["codes"], res["recipes"], intro)

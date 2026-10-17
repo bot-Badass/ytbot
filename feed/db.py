@@ -110,7 +110,20 @@ CREATE TABLE IF NOT EXISTS pantry (
     by_user     INTEGER NOT NULL DEFAULT 0,
     PRIMARY KEY (family_id, code)
 );
+CREATE TABLE IF NOT EXISTS event (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    ts          INTEGER NOT NULL,
+    user_id     INTEGER NOT NULL,
+    kind        TEXT NOT NULL,           -- btn | cmd | search
+    action      TEXT NOT NULL,           -- f:<action> для кнопки, /start для команди
+    data        TEXT NOT NULL DEFAULT '',-- повний callback_data або текст пошуку
+    hits        INTEGER                  -- лише для search: скільки знайдено
+);
+CREATE INDEX IF NOT EXISTS event_ts ON event(ts);
+CREATE INDEX IF NOT EXISTS event_user ON event(user_id, ts);
 """
+
+EVENT_DAYS = 180     # журнал дій живе пів року, далі стирається на старті бота
 
 _conn: sqlite3.Connection | None = None
 
@@ -124,6 +137,7 @@ def conn() -> sqlite3.Connection:
         _conn.execute("PRAGMA journal_mode=WAL")
         _conn.execute("PRAGMA foreign_keys=ON")
         _conn.executescript(SCHEMA)
+        _conn.execute("DELETE FROM event WHERE ts<?", (now() - EVENT_DAYS * 86400,))
         _conn.commit()
     return _conn
 
@@ -426,6 +440,13 @@ def subscriber_stats() -> dict:
             "day": day, "week": week, "meals": meals}
 
 
+def log_event(user_id: int, kind: str, action: str, data: str = "",
+              hits: int | None = None) -> None:
+    """Журнал натискань і пошуків для аналізу поведінки. Текст пошуку ріжемо до 200."""
+    run("INSERT INTO event(ts, user_id, kind, action, data, hits) VALUES(?,?,?,?,?,?)",
+        (now(), int(user_id), kind, action[:64], data[:200], hits))
+
+
 def wipe_family(family_id: int) -> None:
     """Видаляє родину і все, що з нею повʼязано. Підписник лишається в базі.
 
@@ -441,6 +462,8 @@ def wipe_family(family_id: int) -> None:
         run("DELETE FROM measure WHERE child_id=?", (cid,))
         run("DELETE FROM nudge WHERE child_id=?", (cid,))
     run("DELETE FROM pantry WHERE family_id=?", (family_id,))
+    run("DELETE FROM event WHERE user_id IN (SELECT user_id FROM member WHERE family_id=?)",
+        (family_id,))
     run("DELETE FROM kv WHERE family_id=?", (family_id,))
     run("DELETE FROM invite WHERE family_id=?", (family_id,))
     run("DELETE FROM child WHERE family_id=?", (family_id,))
