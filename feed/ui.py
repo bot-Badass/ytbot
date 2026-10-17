@@ -914,7 +914,7 @@ def fridge(child, stock: list[str], since: dict[str, int], intro: dict) -> tuple
                   "",
                   "Найшвидше через «✍️ Списком»: напиши <code>морква, курка, йогурт</code>."]
     else:
-        lines.append(f"Удома {len(stock)} продукт(и):")
+        lines.append(f"Удома {plural(len(stock), 'продукт', 'продукти', 'продуктів')}:")
         lines += _stock_lines(stock, since)
         need = suggest.missing_slots(stock)
         lines.append("")
@@ -1036,7 +1036,7 @@ def fridge_shopping(child, items: list[tuple[str, str]], stock: list[str],
             lines.append(f"   <i>{esc(why)}</i>")
         fresh = [c for c, _ in items if c not in intro]
         if len(fresh) > 2:
-            lines += ["", f"<i>Нового в списку {len(fresh)} позицій - це багато для одного "
+            lines += ["", f"<i>Нового в списку {plural(len(fresh), 'позиція', 'позиції', 'позицій')} - це багато для одного "
                       "тижня. Візьми 2-3 і вводь по одному, тримаючи кожне 2-3 дні поспіль. "
                       "Решта нікуди не дінеться.</i>"]
         elif fresh:
