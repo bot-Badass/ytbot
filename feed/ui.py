@@ -338,13 +338,13 @@ def card(child, code: str, intro: dict) -> tuple[str, M]:
     row = intro.get(code)
 
     risk = {"low": "🟢", "med": "🟡", "high": "🔴"}[p["choking"]]
-    meta = [f"з {p['from_month']} міс", f"{risk} ризик подавитися: {catalog.CHOKING[p['choking']]}"]
+    meta = [catalog.age_label(p["from_month"]), f"{risk} ризик подавитися: {catalog.CHOKING[p['choking']]}"]
     if p.get("allergen"):
         meta.append(f"<mark>⚠️ алерген: {esc(p['allergen'])}</mark>")
     parts = [f"<h3>{p['emoji']} {esc(p['name'])}{catalog.mark_allergen(code)}</h3>", chips(*meta)]
     if p["from_month"] > months:
         parts.append(f"<blockquote>⏳ Для {esc(child['name'])} ще зарано - рекомендовано "
-                     f"з {p['from_month']} місяців.</blockquote>")
+                     f"{catalog.age_label(p['from_month'])}.</blockquote>")
 
     band_title = next(t for k, lo, hi, t in catalog.AGE_BANDS if k == band)
     parts.append(f"<h4>Як подавати зараз · {esc(band_title)}</h4><p>{esc(p['serve'][band])}</p>")
@@ -1090,7 +1090,7 @@ def next_up(child, intro: dict, items: list[tuple[str, str]], hold: list[str],
     parts.append("<p>Порядок такий: спершу алергени, далі те, чого в раціоні найменше.</p>")
     for code, why in items:
         prod = catalog.product(code)
-        parts.append(f"<h4>{prod['emoji']} {esc(prod['name'])}{catalog.mark_allergen(code)} · з {prod['from_month']} міс</h4>"
+        parts.append(f"<h4>{prod['emoji']} {esc(prod['name'])}{catalog.mark_allergen(code)} · {catalog.age_label(prod['from_month'])}</h4>"
                      f"<p><i>{esc(why)}</i></p><p>{esc(catalog.serving(code, months))}</p>")
     parts.append("<p><i>Вводимо по одному і тримаємо 2-3 дні поспіль.</i></p>")
 

@@ -168,6 +168,14 @@ def rare_count(key: str) -> int:
     return sum(1 for p in by_key(key) if p.get("rare"))
 
 
+def age_label(months: int) -> str:
+    """«з 12 міс» / «з 5 років»: ікра стоїть з 60 місяців, а «з 60 міс» батьки рахують подумки."""
+    if months >= 24 and months % 12 == 0:
+        years = months // 12
+        return f"з {years} {'років' if years >= 5 else 'роки'}"
+    return f"з {months} міс"
+
+
 def band_for(months: int) -> str:
     for key, lo, hi, _ in AGE_BANDS:
         if lo <= months <= hi:
