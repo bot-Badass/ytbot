@@ -37,6 +37,7 @@ from telegram.ext import (
 )
 
 from feed import handlers as feed
+from feed import feedback as feed_feedback
 from feed import reminders as feed_reminders
 
 BASE_DIR = Path(__file__).resolve().parent
@@ -538,6 +539,10 @@ def main() -> None:
 
     app = builder.build()
 
+    # group -2: reply автора на відгук - пересилаємо людині, решту пропускаємо
+    app.add_handler(MessageHandler(filters.TEXT & filters.REPLY & ~filters.COMMAND,
+                                   feed_feedback.on_owner_reply), group=-2)
+
     # group -1: бот чекає на текстову відповідь (імʼя, дата, вага) - перехоплюємо першими
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, feed.on_text), group=-1)
 
@@ -545,6 +550,7 @@ def main() -> None:
     app.add_handler(CommandHandler("start", feed.cmd_start))
     app.add_handler(CommandHandler("help", feed.cmd_help))
     app.add_handler(CommandHandler("id", feed.cmd_id))
+    app.add_handler(CommandHandler("feedback", feed.cmd_feedback))
     app.add_handler(CommandHandler("yt", cmd_yt))
     app.add_handler(CallbackQueryHandler(feed.on_button, pattern=r"^f:"))
     app.add_handler(CallbackQueryHandler(on_choice, pattern=r"^(dl|x)\|"))
@@ -555,6 +561,7 @@ def main() -> None:
 
     app.add_error_handler(on_error)
     feed_reminders.install(app)
+    feed_feedback.install(app)
 
     log.info("бот стартує: прикорм + YouTube, ліміт %s МБ, паралельно %s", MAX_UPLOAD_MB, MAX_PARALLEL)
     app.run_polling(drop_pending_updates=True, allowed_updates=Update.ALL_TYPES)

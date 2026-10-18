@@ -841,6 +841,7 @@ def settings(child, family_id: int, remind: bool, show_rare: bool = False) -> tu
             [B(("🙈 Сховати" if show_rare else "🥬 Показати") + " рідкісні продукти",
                callback_data="f:rare:set")],
             [B("✏️ Змінити дату народження", callback_data="f:editbirth")],
+            [B("💬 Написати автору", callback_data="f:fb")],
             [B("ℹ️ Інструкція", callback_data="f:guide"),
              B("🔒 Дані і приватність", callback_data="f:privacy")],
             [B("🏠 Головна", callback_data="f:home")]]
@@ -1283,6 +1284,7 @@ def guide(key: str = "start") -> tuple[str, M]:
     rows = [nav] if nav else []
     rows += _rows([B(("• " if k == key else "") + GUIDE_TITLES[k], callback_data=f"f:guide:{k}")
                    for k in GUIDE_ORDER if k != key], 2)
+    rows.append([B("💬 Написати автору", callback_data="f:fb")])
     rows.append([B("🏠 Головна", callback_data="f:home")])
     return text, M(rows)
 

@@ -121,6 +121,22 @@ CREATE TABLE IF NOT EXISTS event (
 );
 CREATE INDEX IF NOT EXISTS event_ts ON event(ts);
 CREATE INDEX IF NOT EXISTS event_user ON event(user_id, ts);
+CREATE TABLE IF NOT EXISTS feedback (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    ts          INTEGER NOT NULL,
+    user_id     INTEGER NOT NULL,
+    kind        TEXT NOT NULL,           -- msg | search | rate | ask (мітка «питали»)
+    rating      TEXT NOT NULL DEFAULT '',-- up | down для rate
+    text        TEXT NOT NULL DEFAULT '',
+    answered_ts INTEGER                  -- коли автор відповів
+);
+CREATE INDEX IF NOT EXISTS feedback_user ON feedback(user_id, kind);
+CREATE TABLE IF NOT EXISTS feedback_msg (
+    chat_id     INTEGER NOT NULL,        -- чат автора, куди прийшов відгук
+    message_id  INTEGER NOT NULL,
+    feedback_id INTEGER NOT NULL,
+    PRIMARY KEY (chat_id, message_id)
+);
 """
 
 EVENT_DAYS = 180     # журнал дій живе пів року, далі стирається на старті бота

@@ -12,7 +12,7 @@ from telegram import ReplyKeyboardRemove, Update
 from telegram.constants import ParseMode
 from telegram.ext import ApplicationHandlerStop, ContextTypes
 
-from . import catalog, db, growth, rich, search, suggest, ui
+from . import catalog, db, feedback, growth, rich, search, suggest, ui
 
 log = logging.getLogger("feed")
 MAX_PLATE = 12                        # 6 не вистачало: каша+фрукти+олія+… легко дають 7-8
@@ -204,6 +204,12 @@ async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await _show(update, *ui.guide("start"))
 
 
+async def cmd_feedback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    track(update)
+    context.user_data["await"] = {"k": "fb"}
+    await update.message.reply_text(feedback.PROMPT)
+
+
 async def cmd_id(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await update.message.reply_text(f"Твій Telegram ID: <code>{update.effective_user.id}</code>",
                                     parse_mode=ParseMode.HTML)
@@ -221,6 +227,16 @@ async def on_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     text = (update.message.text or "").strip()
     kind = pending["k"]
     user = update.effective_user
+
+    if kind == "fb":
+        context.user_data.pop("await", None)
+        await feedback.submit(context, user.id, text, "rate" if pending.get("rating") else "msg",
+                              pending.get("rating", ""))
+        await update.message.reply_text("Дякую! Передав автору. Відповідь, якщо буде, прийде сюди.")
+        child = db.child_of(user.id)
+        if child:
+            await _send(update, *ui.home(child, db.intro_map(child["id"])))
+        raise ApplicationHandlerStop
 
     if kind == "child_name":
         name = text[:40]
@@ -465,6 +481,31 @@ async def on_button(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         await query.answer()
         return await _show(update, *ui.guide(parts[2] if len(parts) > 2 else "start"))
 
+    if action == "fb":
+        await query.answer()
+        context.user_data["await"] = {"k": "fb"}
+        await _send(update, feedback.PROMPT)
+        return
+    if action == "fbsend":
+        draft = context.user_data.pop("fb_draft", "")
+        if not draft:
+            await query.answer("Повідомлення вже не знайшов - напишіть ще раз.", show_alert=True)
+            return
+        await query.answer()
+        await feedback.submit(context, user.id, draft, "search")
+        await _show(update, "Дякую! Передав автору. Відповідь, якщо буде, прийде сюди.",
+                    M([[B("🏠 Головна", callback_data="f:home")]]))
+        return
+    if action == "rate":
+        await query.answer()
+        if parts[2] == "up":
+            await feedback.submit(context, user.id, "", "rate", "up")
+            await _show(update, "Дякую, це дуже приємно! Якщо чогось бракує - пишіть, читаю кожне.",
+                        M([[feedback.WRITE_BTN], [B("🏠 Головна", callback_data="f:home")]]))
+        else:
+            context.user_data["await"] = {"k": "fb", "rating": "down"}
+            await _show(update, "Що саме не так? Напишіть кількома словами, я виправлю.")
+        return
     if action == "joinask":
         await query.answer()
         context.user_data["await"] = {"k": "join"}
@@ -845,6 +886,13 @@ async def on_free_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         context.user_data["found"] = res["codes"]
         text, kb = ui.search_result(child, query, res["codes"], res["recipes"], intro)
         await _send(update, text, kb)
+        return
+    if feedback.looks_like_message(query):
+        context.user_data["fb_draft"] = query[:feedback.TEXT_LIMIT]
+        await update.message.reply_text(
+            "У бібліотеці такого не знайшов. Схоже на питання - надіслати його автору бота?",
+            reply_markup=M([[B("💬 Так, надіслати автору", callback_data="f:fbsend")],
+                            [B("🏠 Головна", callback_data="f:home")]]))
         return
     text, kb = ui.home(child, intro)
     await update.message.reply_text(

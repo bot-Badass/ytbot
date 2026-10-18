@@ -11,6 +11,7 @@ from __future__ import annotations
 import asyncio
 import html.parser
 import json
+import os
 import sys
 import tempfile
 from pathlib import Path
@@ -22,7 +23,7 @@ from feed import db  # noqa: E402
 
 db.DB_PATH = Path(tempfile.mkdtemp()) / "smoke.sqlite3"
 
-from feed import catalog, growth, handlers, rich, suggest, ui  # noqa: E402
+from feed import catalog, feedback, growth, handlers, rich, suggest, ui  # noqa: E402
 from telegram import InlineKeyboardMarkup as M  # noqa: E402
 from telegram.ext import ApplicationHandlerStop  # noqa: E402
 
@@ -100,6 +101,7 @@ def check_kb(where: str, kb) -> None:
 class Bot:
     def __init__(self):
         self.sent: list[str] = []
+        self.to: list[tuple[int, str]] = []   # кому пішло через send_message
         self.next_id = 1
 
     async def do_api_request(self, endpoint, api_kwargs=None, **kw):
@@ -120,6 +122,9 @@ class Bot:
         check_text("bot.send", text)
         check_kb("bot.send", kw.get("reply_markup"))
         self.sent.append(text)
+        self.to.append((chat_id, text))
+        self.next_id += 1
+        return _Msg(self.next_id)
 
 
 class Chat:
@@ -143,7 +148,8 @@ class Message:
 
 
 class _Msg:
-    message_id = 1
+    def __init__(self, message_id=1):
+        self.message_id = message_id
 
 
 class Query:
@@ -577,6 +583,56 @@ async def main() -> None:
     await handlers.on_text(upd, ctx)          # нічого не чекаємо - має пройти далі
     await handlers.on_free_text(upd, ctx)
     print("вільний текст не ламає бота")
+
+    # ── зворотний звʼязок ──
+    os.environ["FEEDBACK_TO"] = "909"
+    owner = User(909, "Author")
+    mom = User(303, "Mom")
+    ctx_mom = Context(bot)
+    await press("f:guide", mom, ctx_mom)
+    assert "f:fb" in json.dumps(ui.guide("start")[1].to_dict()), "в інструкції нема «Написати автору»"
+    await press("f:fb", mom, ctx_mom)
+    await say("Не можу змінити дату народження", mom, ctx_mom)
+    fb = db.q1("SELECT * FROM feedback WHERE user_id=? AND kind='msg'", (mom.id,))
+    assert fb and "дату" in fb["text"], "відгук не збережено"
+    assert any(c == 909 and "Відгук #" in t for c, t in bot.to), "відгук не дійшов автору"
+    link = db.q1("SELECT * FROM feedback_msg WHERE feedback_id=?", (fb["id"],))
+    reply = Message(bot, "Налаштування → Змінити дату народження")
+    reply.chat_id, reply.reply_to_message = 909, _Msg(link["message_id"])
+    upd = Update(bot, owner, text=reply.text)
+    upd.message = reply
+    try:
+        await feedback.on_owner_reply(upd, Context(bot))
+        raise AssertionError("reply автора не зупинив обробку")
+    except ApplicationHandlerStop:
+        pass
+    assert any(c == mom.id and "Відповідь автора" in t for c, t in bot.to), "відповідь не дійшла людині"
+    assert db.q1("SELECT answered_ts FROM feedback WHERE id=?", (fb["id"],))["answered_ts"]
+    # чужий reply (не автор) і reply не на відгук - пропускаються далі
+    upd.effective_user = mom
+    await feedback.on_owner_reply(upd, Context(bot))
+    # пошук без результатів, схожий на питання
+    await handlers.cmd_start(Update(bot, mom, text="/start"), ctx_mom)
+    await press("f:setup", mom, ctx_mom)
+    await say("Соня", mom, ctx_mom)
+    await say("01.04.2026", mom, ctx_mom)
+    await press("f:sex:girls", mom, ctx_mom)
+    await handlers.on_free_text(Update(bot, mom, text="А якщо вона їсть все?"), ctx_mom)
+    assert ctx_mom.user_data.get("fb_draft"), "питання без результатів не запропоновано автору"
+    await press("f:fbsend", mom, ctx_mom)
+    assert db.q1("SELECT 1 FROM feedback WHERE user_id=? AND kind='search'", (mom.id,))
+    # питання на 3-й день: один раз, 👎 веде в текст
+    db.run("UPDATE family SET created_at=created_at-4*86400")
+    await feedback.ask_once(Context(bot))
+    await feedback.ask_once(Context(bot))
+    asks = db.q1("SELECT COUNT(*) n FROM feedback WHERE user_id=? AND kind='ask'", (mom.id,))["n"]
+    assert asks == 1, f"питання поставлено {asks} разів"
+    await press("f:rate:down", mom, ctx_mom)
+    await say("Мало рецептів з рибою", mom, ctx_mom)
+    assert db.q1("SELECT 1 FROM feedback WHERE user_id=? AND kind='rate' AND rating='down' "
+                 "AND text LIKE 'Мало%'", (mom.id,)), "👎 з текстом не збережено"
+    await press("f:rate:up", mom, ctx_mom)
+    print("зворотний звʼязок: кнопка → автор → reply → людина; пошук-питання; 3-й день один раз")
 
     print(f"\nнайбільша клавіатура: {widest[1]} кнопок, {widest[2]} байт - {widest[0]}")
     print(f"екранів перевірено: {screens}, повідомлень надіслано: {len(bot.sent)}")
