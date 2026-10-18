@@ -129,10 +129,14 @@ async def ask_once(context: ContextTypes.DEFAULT_TYPE) -> None:
         "AND EXISTS (SELECT 1 FROM child c WHERE c.family_id=m.family_id) "
         "AND m.user_id NOT IN (SELECT user_id FROM feedback WHERE kind='ask')",
         (now - ASK_AFTER_DAYS * 86400, now - ASK_ACTIVE_DAYS * 86400))
+    # своя родина автора (Max і D.) не питається: це не користувачі, а ті, хто робить бот
+    own = {r["user_id"] for o in owners() for r in db.q(
+        "SELECT user_id FROM member WHERE family_id=(SELECT family_id FROM member WHERE user_id=?)",
+        (o,))} | set(owners())
     asked = 0
     for r in rows:
         uid = r["user_id"]
-        if uid in owners():
+        if uid in own:
             continue
         # мітка ставиться ДО відправки: питання задається один раз, навіть якщо не дійшло
         db.run("INSERT INTO feedback(ts, user_id, kind) VALUES(?,?, 'ask')", (now, uid))
