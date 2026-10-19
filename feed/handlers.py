@@ -887,6 +887,17 @@ async def on_free_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         text, kb = ui.search_result(child, query, res["codes"], res["recipes"], intro)
         await _send(update, text, kb)
         return
+    tip = search.hint(query)
+    if tip:
+        answer, guide, buttons = tip
+        context.user_data["fb_draft"] = query[:feedback.TEXT_LIMIT]
+        await update.message.reply_text(
+            f"💡 {answer}",
+            reply_markup=M([[B(t, callback_data=cb) for t, cb in buttons],
+                            [B("ℹ️ Інструкція", callback_data=f"f:guide:{guide}")],
+                            [B("💬 Не те, надіслати автору", callback_data="f:fbsend")],
+                            [B("🏠 Головна", callback_data="f:home")]]))
+        return
     if feedback.looks_like_message(query):
         context.user_data["fb_draft"] = query[:feedback.TEXT_LIMIT]
         await update.message.reply_text(
