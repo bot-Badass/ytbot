@@ -463,6 +463,9 @@ def slot_coverage(intro: dict) -> dict[str, int]:
     return counts
 
 
+ALLERGEN_BASE = 10
+
+
 def next_products(months: int, intro: dict, stock: list[str] | None = None,
                   limit: int = 3, exclude: frozenset[str] | set[str] = frozenset()) -> list[tuple[str, str]]:
     """Що логічно ввести наступним. Пари (код, чому саме він).
@@ -487,9 +490,19 @@ def next_products(months: int, intro: dict, stock: list[str] | None = None,
     # кращий тайбрейк, ніж алфавіт: інакше «вуглевод» починається з амаранту
     rank = {code: i for i, code in enumerate(catalog.products())}
 
+    # ⭐ Алергени першими - лише коли є база (10+ продуктів) і за тиждень не було
+    # іншого нового алергену. Інакше шестимісячному з 6 овочами бот підряд радив
+    # вівсянку, макарони, хліб, лосось, яйце, йогурт (відгук #563 21.10)
+    base = sum(1 for r in intro.values() if r["status"] != "avoid")
+    week_ago = (max((r["last_ts"] for r in intro.values()), default=0)) - 7 * 86400
+    recent = any(catalog.product(c) and catalog.product(c).get("allergen") and r["first_ts"] >= week_ago
+                 for c, r in intro.items())
+    early = base < ALLERGEN_BASE or recent
+
     def order(code: str) -> tuple:
         p = catalog.product(code)
-        return (0 if code in stock else 1, p["from_month"], rank[code])
+        late = 1 if early and p.get("allergen") else 0
+        return (late, 0 if code in stock else 1, p["from_month"], rank[code])
 
     picked: list[tuple[str, str]] = []
     taken: set[str] = set()
@@ -500,7 +513,7 @@ def next_products(months: int, intro: dict, stock: list[str] | None = None,
         picked.append((code, why + at_home))
 
     allergens = sorted((c for c in catalog.allergen_codes() if ok(c)), key=order)
-    if allergens:
+    if allergens and not early:
         code = allergens[0]
         take(code, f"Алерген ({catalog.product(code)['allergen']}), якого ще не пробували. "
                    "Їх вводять рано і потім дають регулярно.")
@@ -514,6 +527,14 @@ def next_products(months: int, intro: dict, stock: list[str] | None = None,
             continue
         take(pool[0], f"У раціоні найменше закритий слот «{SLOT_LABEL[slot]}»: "
                       f"продуктів там {counts[slot]}.")
+    # слотів менше, ніж просили: добираємо наступними за порядком, алергени в кінці
+    if len(picked) < limit:
+        for code in sorted((c for c in catalog.products() if ok(c) and c not in taken), key=order):
+            if len(picked) >= limit:
+                break
+            p = catalog.product(code)
+            take(code, f"Алерген ({p['allergen']}): по одному, коли база вже є." if p.get("allergen")
+                 else f"Ще один продукт у слот «{SLOT_LABEL.get(slot_of(code), 'інше')}».")
 
     return picked[:limit]
 
@@ -546,8 +567,9 @@ def day_plan(months: int, intro: dict, now_ts: int,
     if not hold and keep and keep not in intro:
         new = keep                       # «інше меню»: новий той самий, страви інші
     elif not hold:
-        items = next_products(months, intro, limit=1, exclude=exclude)
-        new = items[0][0] if items else None
+        # по колу між слотами: «інший новий» дає крупу, потім білок, потім овоч...
+        items = next_products(months, intro, limit=4, exclude=exclude)
+        new = items[len(exclude) % len(items)][0] if items else None
     focus = hold[0] if hold else new
     known = [c for c, r in intro.items() if r["status"] == "ok"]
 
