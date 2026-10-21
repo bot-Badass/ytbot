@@ -1054,6 +1054,72 @@ def fridge_shopping(child, items: list[tuple[str, str]], stock: list[str],
 # ─────────────────────── що ввести далі ───────────────────────
 
 
+# ─────────────────────── онбординг: дата і перший запис ───────────────────────
+
+MONTHS_SHORT = ("січ", "лют", "бер", "квіт", "трав", "черв",
+                "лип", "серп", "вер", "жовт", "лист", "груд")
+# день усередині тижня: точність до тижня порадам вистачає, а друкувати дату не треба
+DAY_BUCKETS = (("1-7", 4), ("8-14", 11), ("15-21", 18), ("22-31", 25))
+
+
+def birth_year(name: str) -> tuple[str, M]:
+    this = datetime.now(TZ).year
+    rows = [[B(str(y), callback_data=f"f:by:{y}") for y in range(this - 2, this + 1)],
+            [B("✏️ Ввести дату текстом", callback_data="f:btext")]]
+    return f"Дата народження: {esc(name)}. Оберіть рік:", M(rows)
+
+
+def birth_month(name: str, year: int) -> tuple[str, M]:
+    today = datetime.now(TZ).date()
+    last = today.month if year == today.year else 12
+    btns = [B(MONTHS_SHORT[m - 1], callback_data=f"f:bm:{year}:{m}") for m in range(1, last + 1)]
+    rows = _rows(btns, 4) + [[B("‹ Рік", callback_data="f:bback")]]
+    return f"{esc(name)}, {year}. Місяць:", M(rows)
+
+
+def birth_day(name: str, year: int, month: int) -> tuple[str, M]:
+    today = datetime.now(TZ).date()
+    btns = [B(title, callback_data=f"f:bd:{year}:{month}:{day}") for title, day in DAY_BUCKETS
+            if date(year, month, int(title.split("-")[0])) <= today]
+    rows = [btns, [B("‹ Місяць", callback_data=f"f:by:{year}"),
+                   B("✏️ Точна дата", callback_data="f:btext")]]
+    return f"{esc(name)}, {MONTHS_SHORT[month - 1]} {year}. Яке число?", M(rows)
+
+
+# стартові продукти: те, з чого зазвичай починають, щоб відмітити вже спробуване одним тапом
+FIRST_TRIED = ("kabachok", "brokoli", "tsvitna", "garbuz", "morkva", "yabluko", "grusha",
+               "banan", "avokado", "vivsianka", "grechka", "yaitse", "kurka", "indychka", "yogurt")
+SHORT_NAMES = {"tsvitna": "Цвітна", "yogurt": "Йогурт"}
+
+
+def first_tried(child, picked: list[str]) -> tuple[str, M]:
+    """Перший екран після профілю: одне питання замість панелі з дев'яти кнопок."""
+    ate = "їла" if child["sex"] == "girls" else "їв"
+    parts = [f"<h3>Що {esc(child['name'])} вже {ate}?</h3>",
+             "<p>Тапніть усе, що вже пробували, навіть один раз. З цього почнеться щоденник, "
+             "і я підкажу, що вводити далі.</p>"]
+    btns = []
+    for code in FIRST_TRIED:
+        p = catalog.product(code)
+        if not p:
+            continue
+        mark = "✔️ " if code in picked else ""
+        btns.append(B(f"{mark}{p['emoji']} {SHORT_NAMES.get(code, p['name'])}",
+                      callback_data=f"f:ft:{code}"))
+    btns.append(B("🔎 Інше", callback_data="f:fother"))
+    rows = _rows(btns, 3)
+    if picked:
+        rows.append([B(f"Зберегти ({len(picked)})", callback_data="f:fsave", style="success")])
+    rows.append([B("🍼 Ще не почали прикорм", callback_data="f:fnone")])
+    rows.append([B("Пропустити", callback_data="f:home")])
+    return Rich("".join(parts)), M(rows)
+
+
+def first_saved(child, codes: list[str]) -> str:
+    return (f"📔 <b>Записано у щоденник: {esc(child['name'])}</b>\n"
+            + " · ".join(catalog.label(c) for c in codes))
+
+
 def next_up(child, intro: dict, items: list[tuple[str, str]], hold: list[str],
             stock: list[str]) -> tuple[str, M]:
     """Головна підказка бота: один наступний продукт, і чому саме він."""

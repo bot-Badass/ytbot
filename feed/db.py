@@ -259,6 +259,19 @@ def touch_intro(child_id: int, code: str, ts: int) -> bool:
     return True
 
 
+def mark_tried(child_id: int, codes: list[str]) -> list[str]:
+    """Продукти, які дитина їла ще до бота: одразу «освоєно», без нагадувань про реакцію."""
+    ts = now()
+    added = []
+    for code in codes:
+        if q1("SELECT 1 FROM intro WHERE child_id=? AND code=?", (child_id, code)):
+            continue
+        run("INSERT INTO intro(child_id, code, first_ts, last_ts, times, status) "
+            "VALUES(?,?,?,?,1,'ok')", (child_id, code, ts, ts))
+        added.append(code)
+    return added
+
+
 def intro_map(child_id: int) -> dict[str, sqlite3.Row]:
     return {r["code"]: r for r in q("SELECT * FROM intro WHERE child_id=?", (child_id,))}
 

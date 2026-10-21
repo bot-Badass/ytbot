@@ -132,12 +132,12 @@ def _parse_date(text: str) -> date | None:
 
 
 ONBOARD_TEXT = (
-    "👋 <b>Це помічник з прикорму.</b>\n\n"
-    "Веде щоденник їжі, тримає бібліотеку продуктів із безпечною подачею за віком, "
-    "фіксує реакції, рахує зростання за таблицями ВООЗ і нагадує про правило трьох днів.\n\n"
-    "Ще складає тарілки з того, що є в холодильнику, і рахує покупки на тиждень.\n\n"
-    "Безкоштовно, без підписки і реклами. Налаштування займає хвилину: "
-    "імʼя дитини, дата народження, стать.\n\n"
+    "👋 <b>Щоденник прикорму в Telegram.</b>\n\n"
+    "Тапаєте, що дитина зʼїла, а бот підказує:\n"
+    "• як подати продукт у її віці\n"
+    "• що ввести наступним\n"
+    "• коли перевірити реакцію (правило трьох днів)\n\n"
+    "Безкоштовно, без реклами. Налаштування займає 20 секунд.\n\n"
     "<i>Довідка на основі рекомендацій ВООЗ, AAP і EFSA. Не замінює педіатра.</i>"
 )
 
@@ -161,13 +161,29 @@ def may_create(update: Update) -> bool:
 
 async def onboard(update: Update) -> None:
     if may_create(update):
-        kb = M([[B("👶 Створити профіль дитини", callback_data="f:setup")],
-                [B("🔗 У мене є код запрошення", callback_data="f:joinask")],
-                [B("ℹ️ Що вміє бот", callback_data="f:guide")]])
+        # код запрошення мають одиниці: на першому екрані він лише збивав (13 тапів без коду)
+        kb = M([[B("👶 Почати: як звати дитину?", callback_data="f:setup", style="success")],
+                [B("ℹ️ Що вміє бот", callback_data="f:guide"),
+                 B("🔗 Код запрошення", callback_data="f:joinask")]])
         await _show(update, ONBOARD_TEXT, kb)
         return
     kb = M([[B("🔗 У мене є код запрошення", callback_data="f:joinask")]])
     await _show(update, PRIVATE_TEXT, kb)
+
+
+async def _ask_sex(update: Update, context: ContextTypes.DEFAULT_TYPE, value: date,
+                   name: str, edit: bool = True) -> None:
+    """Дата вже є (кнопками чи текстом), лишилась стать."""
+    context.user_data["await"] = None
+    context.user_data["birth"] = value.isoformat()
+    context.user_data["name"] = name
+    kb = M([[B("👧 Дівчинка", callback_data="f:sex:girls"),
+             B("👦 Хлопчик", callback_data="f:sex:boys")]])
+    text = f"{growth.age_text(value)}. Стать потрібна для таблиць ВООЗ:"
+    if edit:
+        await _show(update, text, kb)
+    else:
+        await update.message.reply_text(text, reply_markup=kb)
 
 
 async def ensure(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -243,9 +259,11 @@ async def on_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         if not name:
             await update.message.reply_text("Напиши імʼя текстом.")
             raise ApplicationHandlerStop
+        # текстом дату теж приймаємо, але кнопки не дають помилитись у форматі
         context.user_data["await"] = {"k": "birth", "name": name}
-        await update.message.reply_text(
-            f"Дата народження {name}? Формат: 15.01.2026")
+        context.user_data["name"] = name
+        t, kb = ui.birth_year(name)
+        await update.message.reply_text(t, reply_markup=kb)
         raise ApplicationHandlerStop
 
     if kind == "birth":
@@ -253,13 +271,8 @@ async def on_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         if not value:
             await update.message.reply_text("Не зрозумів дату. Напиши як 15.01.2026.")
             raise ApplicationHandlerStop
-        context.user_data["await"] = None
-        context.user_data["birth"] = value.isoformat()
-        context.user_data["name"] = pending.get("name") or (db.child_of(user.id) or {})["name"]
-        kb = M([[B("👧 Дівчинка", callback_data="f:sex:girls"),
-                 B("👦 Хлопчик", callback_data="f:sex:boys")]])
-        await update.message.reply_text(
-            f"{growth.age_text(value)}. Стать потрібна для таблиць ВООЗ:", reply_markup=kb)
+        name = pending.get("name") or (db.child_of(user.id) or {})["name"]
+        await _ask_sex(update, context, value, name, edit=False)
         raise ApplicationHandlerStop
 
     if kind == "editbirth":
@@ -511,6 +524,23 @@ async def on_button(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         context.user_data["await"] = {"k": "join"}
         await _show(update, "Надішли код запрошення (6 символів).")
         return
+    if action in ("by", "bm", "bd", "bback", "btext"):
+        # дата народження кнопками: рік → місяць → тиждень
+        await query.answer()
+        name = (context.user_data.get("await") or {}).get("name") \
+            or context.user_data.get("name") or "Малюк"
+        context.user_data["await"] = {"k": "birth", "name": name}
+        if action == "btext":
+            return await _show(update, f"Дата народження: {ui.esc(name)}. Формат: 15.01.2026")
+        if action == "bback":
+            return await _show(update, *ui.birth_year(name))
+        if action == "by":
+            return await _show(update, *ui.birth_month(name, int(parts[2])))
+        if action == "bm":
+            return await _show(update, *ui.birth_day(name, int(parts[2]), int(parts[3])))
+        value = min(date(int(parts[2]), int(parts[3]), int(parts[4])), datetime.now(ui.TZ).date())
+        return await _ask_sex(update, context, value, name)
+
     if action == "sex":
         await query.answer()
         m = db.member(user.id) or {"family_id": db.create_family(user.id, _who(update))}
@@ -518,14 +548,15 @@ async def on_button(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         birth = context.user_data.get("birth")
         if not birth:
             context.user_data["await"] = {"k": "birth", "name": name}
-            await _show(update, "Спершу дата народження. Формат: 15.01.2026")
+            await _show(update, *ui.birth_year(name))
             return
         db.add_child(m["family_id"], name, birth, parts[2])
         context.user_data.pop("birth", None)
         child = db.child_of(user.id)
-        text, kb = ui.home(child, db.intro_map(child["id"]))
-        await _show(update, f"Профіль створено: {child['name']}, {growth.age_text(ui.birth_date(child))}.")
-        await _send(update, text, kb)
+        await _show(update, f"✅ Профіль готовий: {child['name']}, {growth.age_text(ui.birth_date(child))}.")
+        # одразу перший запис: з головної 75% так і не доходили до «Записати»
+        context.user_data["first"] = []
+        await _send(update, *ui.first_tried(child, []))
         return
 
     got = await ensure(update, context)
@@ -545,6 +576,34 @@ async def on_button(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         context.user_data.pop("await", None)
         context.user_data.pop("day", None)
         return await _show(update, *ui.home(child, intro))
+
+    if action == "ft":
+        picked = context.user_data.setdefault("first", [])
+        code = parts[2]
+        picked.remove(code) if code in picked else picked.append(code)
+        return await _show(update, *ui.first_tried(child, picked))
+
+    if action == "fsave":
+        picked = context.user_data.pop("first", None) or []
+        if not picked:
+            return await _show(update, *ui.first_tried(child, []))
+        db.mark_tried(cid, picked)
+        await _show(update, ui.first_saved(child, picked))
+        intro = db.intro_map(cid)
+        stock = db.pantry_codes(fid)
+        items = suggest.next_products(ui.months_of(child), intro, stock)
+        context.user_data["next"] = [c for c, _ in items]
+        return await _send(update, *ui.next_up(child, intro, items, [], stock))
+
+    if action == "fother":
+        # решту продуктів обирають у звичайному конструкторі, відмічене вже в тарілці
+        context.user_data["draft"] = context.user_data.pop("first", None) or []
+        context.user_data["grp"] = "veg"
+        return await _show(update, *ui.draft(child, _draft(context), intro, "veg", show_rare))
+
+    if action == "fnone":
+        context.user_data.pop("first", None)
+        return await _show(update, *ui.guide("start"))
 
     if action == "new":
         context.user_data["draft"] = []

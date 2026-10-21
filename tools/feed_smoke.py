@@ -615,8 +615,28 @@ async def main() -> None:
     await handlers.cmd_start(Update(bot, mom, text="/start"), ctx_mom)
     await press("f:setup", mom, ctx_mom)
     await say("Соня", mom, ctx_mom)
-    await say("01.04.2026", mom, ctx_mom)
+    # дата кнопками: рік → місяць → тиждень, з поверненнями назад
+    await press("f:by:2026", mom, ctx_mom)
+    await press("f:bback", mom, ctx_mom)
+    await press("f:by:2026", mom, ctx_mom)
+    await press("f:bm:2026:4", mom, ctx_mom)
+    await press("f:bd:2026:4:4", mom, ctx_mom)
     await press("f:sex:girls", mom, ctx_mom)
+    sonia = db.child_of(mom.id)
+    assert sonia and sonia["birth_date"] == "2026-04-04", "дата кнопками не лягла"
+    # перший запис одразу після профілю: спробуване = освоєне, без нагадувань про реакцію
+    for code in ["kabachok", "garbuz", "garbuz", "garbuz"]:
+        await press(f"f:ft:{code}", mom, ctx_mom)
+    await press("f:fsave", mom, ctx_mom)
+    tried = db.intro_map(sonia["id"])
+    assert set(tried) == {"kabachok", "garbuz"} and all(r["status"] == "ok" for r in tried.values()), \
+        f"перший запис не збережено: {dict(tried)}"
+    assert not db.q1("SELECT 1 FROM nudge WHERE child_id=?", (sonia["id"],)), "спробуване дало нагадування"
+    await press("f:ft:banan", mom, ctx_mom)
+    await press("f:fother", mom, ctx_mom)
+    assert ctx_mom.user_data.get("draft") == ["banan"], "відмічене не перейшло в тарілку"
+    await press("f:fnone", mom, ctx_mom)
+    print("онбординг v2: дата кнопками, перший запис 2 продукти, «Інше» і «Ще не почали»")
     await handlers.on_free_text(Update(bot, mom, text="А якщо вона їсть все?"), ctx_mom)
     assert ctx_mom.user_data.get("fb_draft"), "питання без результатів не запропоновано автору"
     await press("f:fbsend", mom, ctx_mom)
