@@ -98,9 +98,20 @@ def check_kb(where: str, kb) -> None:
         errors.append(f"{where}: клавіатура {size} байт, ліміт близько 8 КБ")
 
 
+class Sent(list):
+    """Екрани по черзі. Повідомлення про досягнення йдуть окремо (ach), бо приходять
+    після екрана дії, і тоді sent[-1] перестав би бути цим екраном."""
+    def __init__(self):
+        super().__init__()
+        self.ach: list[str] = []
+
+    def append(self, text):
+        (self.ach if "досягнення!</b>" in str(text) else super()).append(text)
+
+
 class Bot:
     def __init__(self):
-        self.sent: list[str] = []
+        self.sent: list[str] = Sent()
         self.to: list[tuple[int, str]] = []   # кому пішло через send_message
         self.next_id = 1
 
@@ -617,6 +628,21 @@ async def main() -> None:
     t, _ = ui.activity(db.child_of(max_u.id), max_u.id, 7, others)
     assert "Місце" in str(t) or "Найближча ціль" in str(t), str(t)[:400]
     print("моя активність: 7/30 днів, порівняння з іншими")
+
+    # ── досягнення ──
+    from feed import achievements
+    alisa = db.child_of(max_u.id)
+    assert any("Перший запис" in t for t in bot.sent.ach), "за перший запис досягнення не прийшло"
+    n_ach = len(bot.sent.ach)
+    assert achievements.sync(alisa) == [], "досягнення видалось вдруге"
+    await press("f:home")
+    assert len(bot.sent.ach) == n_ach, "повтор досягнень на звичайній дії"
+    assert "🏅" in bot.sent[-1], "значків на головній немає"
+    await press("f:ach")
+    assert "Досягнення" in bot.sent[-1] and "Далі" in bot.sent[-1], bot.sent[-1][:300]
+    t, _ = ui.new_achievement(alisa, [("taste", 25), ("brave", 1)])
+    assert "Нові досягнення" in t
+    print(f"досягнення: {len(bot.sent.ach)} повідомлень, без повторів, альбом і значки на головній")
     await press("f:new", wife, ctx_wife)
     await press("f:sel:banan", wife, ctx_wife)
     await press("f:save:breakfast", wife, ctx_wife)

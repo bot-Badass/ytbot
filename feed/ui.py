@@ -8,7 +8,7 @@ from zoneinfo import ZoneInfo
 from telegram import InlineKeyboardButton as B
 from telegram import InlineKeyboardMarkup as M
 
-from . import catalog, db, growth, suggest
+from . import achievements, catalog, db, growth, suggest
 from .rich import Rich
 
 TZ = ZoneInfo("Europe/Kyiv")
@@ -143,6 +143,10 @@ def home(child, intro: dict) -> tuple[str, M]:
              f"<tr><td>Алергени</td><td>{bar(allerg_in, len(allerg_all))}</td>"
              f"<td>{allerg_in}/{len(allerg_all)}</td></tr>"
              "</table>"]
+    got = achievements.top(child["id"])
+    if got:
+        more = f" +{len(got) - 5}" if len(got) > 5 else ""
+        parts.append("<p>🏅 " + "  ".join(achievements.badge(k, lvl) for k, lvl in got[:5]) + more + "</p>")
     if watch:
         parts.append("<blockquote>👀 <b>Під наглядом:</b> "
                      + ", ".join(catalog.label(c) for c in watch[:4]) + "</blockquote>")
@@ -166,7 +170,7 @@ def home(child, intro: dict) -> tuple[str, M]:
          B("🎯 Що ввести далі", callback_data="f:next", style="primary")],
         [B("🥕 Продукти", callback_data="f:lib"), B("👨‍🍳 Рецепти", callback_data="f:rec")],
         [B("📔 Щоденник", callback_data="f:diary"), B("📈 Зростання", callback_data="f:grow")],
-        [B("ℹ️ Інструкція", callback_data="f:guide"), B("⚙️ Налаштування", callback_data="f:set")],
+        [B("🏅 Досягнення", callback_data="f:ach"), B("⚙️ Налаштування", callback_data="f:set")],
     ])
     return Rich("".join(parts)), kb
 
@@ -833,6 +837,49 @@ def stats(child, intro: dict) -> tuple[str, M]:
         rows.append([B("🎯 Що ввести далі", callback_data="f:next", style="primary")])
     rows.append([B("‹ Щоденник", callback_data="f:diary"), B("🏠 Головна", callback_data="f:home")])
     return Rich("".join(parts)), M(rows)
+
+
+def album(child) -> tuple[str, M]:
+    """Альбом досягнень: зароблене з датою і що далі з прогресом."""
+    have = achievements.earned(child["id"])
+    now = achievements.metrics(child)
+    done, todo = [], []
+    for key, emoji, title, levels in achievements.ACH:
+        got = have.get(key, [])
+        nxt = next((lvl for lvl in levels if lvl not in {g for g, _ in got}), None)
+        if got:
+            lvl, ts = got[-1]
+            stars = " " + "★" * len(got) + "☆" * (len(levels) - len(got)) if len(levels) > 1 else ""
+            done.append(f"<li>{emoji} <b>{esc(title)}</b>{stars}<br>"
+                        f"{esc(achievements.level_text(key, lvl))} · {local(ts).strftime('%d.%m')}</li>")
+        if nxt is not None:
+            left = max(nxt - now[key], 0)
+            todo.append(f"<li>🔒 {emoji} {esc(title)}: {esc(achievements.level_text(key, nxt))}"
+                        + (f" · {bar(now[key], nxt)} ще {left}" if nxt > 1 and key != "team" else "")
+                        + "</li>")
+    parts = [f"<h3>🏅 Досягнення {esc(child['name'])}</h3>",
+             chips(f"зароблено {sum(len(v) for v in have.values())} з "
+                   f"{sum(len(a[3]) for a in achievements.ACH)}")]
+    if done:
+        parts.append("<ul>" + "".join(done) + "</ul>")
+    else:
+        parts.append("<p>Поки порожньо. Перше досягнення - за перший записаний прийом їжі.</p>")
+    if todo:
+        parts.append("<h4>Далі</h4><ul>" + "".join(todo) + "</ul>")
+    rows = [[B("🍽 Записати прийом їжі", callback_data="f:new", style="success")],
+            [B("🏠 Головна", callback_data="f:home")]]
+    return Rich("".join(parts)), M(rows)
+
+
+def new_achievement(child, got: list[tuple[str, int]]) -> tuple[str, M]:
+    """Повідомлення про нове. Кілька за раз - одним повідомленням."""
+    lines = []
+    for key, lvl in got:
+        _, emoji, title, _ = achievements.BY_KEY[key]
+        lines.append(f"{emoji} <b>{esc(title)}</b>: {esc(achievements.level_text(key, lvl))}")
+    head = "🏅 <b>Нове досягнення!</b>" if len(got) == 1 else "🏅 <b>Нові досягнення!</b>"
+    return (f"{head}\n\n" + "\n".join(lines) + f"\n\n{esc(child['name'])} молодець.",
+            M([[B("🏅 Усі досягнення", callback_data="f:ach")]]))
 
 
 ACT_WINDOWS = (7, 30)

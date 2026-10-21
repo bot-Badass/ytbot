@@ -137,6 +137,13 @@ CREATE TABLE IF NOT EXISTS feedback_msg (
     feedback_id INTEGER NOT NULL,
     PRIMARY KEY (chat_id, message_id)
 );
+CREATE TABLE IF NOT EXISTS achievement (
+    child_id    INTEGER NOT NULL REFERENCES child(id),
+    key         TEXT NOT NULL,           -- feed/achievements.py: ACH
+    level       INTEGER NOT NULL,        -- поріг рівня (10 продуктів, 7 днів) або 1
+    ts          INTEGER NOT NULL,
+    PRIMARY KEY (child_id, key, level)
+);
 """
 
 EVENT_DAYS = 180     # журнал дій живе пів року, далі стирається на старті бота
@@ -522,6 +529,7 @@ def wipe_family(family_id: int) -> None:
         run("DELETE FROM reaction WHERE child_id=?", (cid,))
         run("DELETE FROM measure WHERE child_id=?", (cid,))
         run("DELETE FROM nudge WHERE child_id=?", (cid,))
+        run("DELETE FROM achievement WHERE child_id=?", (cid,))
     run("DELETE FROM pantry WHERE family_id=?", (family_id,))
     run("DELETE FROM event WHERE user_id IN (SELECT user_id FROM member WHERE family_id=?)",
         (family_id,))

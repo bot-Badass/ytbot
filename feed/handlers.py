@@ -12,7 +12,7 @@ from telegram import ReplyKeyboardRemove, Update
 from telegram.constants import ParseMode
 from telegram.ext import ApplicationHandlerStop, ContextTypes
 
-from . import catalog, db, feedback, growth, reminders, rich, search, suggest, ui
+from . import achievements, catalog, db, feedback, growth, reminders, rich, search, suggest, ui
 
 log = logging.getLogger("feed")
 MAX_PLATE = 12                        # 6 не вистачало: каша+фрукти+олія+… легко дають 7-8
@@ -486,6 +486,21 @@ async def _record_and_continue(update: Update, context: ContextTypes.DEFAULT_TYP
 
 
 async def on_button(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    await _on_button(update, context)
+    # досягнення після кожної дії: нове приходить окремим повідомленням тому, хто натиснув
+    user = update.effective_user
+    child = db.child_of(user.id) if user else None
+    if not child:
+        return
+    try:
+        got = achievements.sync(child)
+        if got:
+            await _send(update, *ui.new_achievement(child, got))
+    except Exception:
+        log.exception("досягнення для дитини %s", child["id"])
+
+
+async def _on_button(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     track(update)
     query = update.callback_query
     data = query.data
@@ -902,6 +917,9 @@ async def on_button(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if action == "mnote":
         context.user_data["await"] = {"k": "mnote", "id": int(parts[2])}
         return await _show(update, "Напиши нотатку до цього прийому одним повідомленням.")
+
+    if action == "ach":
+        return await _show(update, *ui.album(child))
 
     if action == "act":
         days = int(parts[2]) if len(parts) > 2 else 7
