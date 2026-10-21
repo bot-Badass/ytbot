@@ -820,6 +820,21 @@ async def _on_button(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
         context.user_data["next"] = [c for c, _ in items]
         return await _show(update, *ui.next_up(child, intro, items, hold, stock))
 
+    if action == "plan":
+        sub = parts[2] if len(parts) > 2 else ""
+        last = context.user_data.get("plan_new")
+        skip = context.user_data.get("planskip", []) if sub == "o" else []
+        if sub == "o" and last:
+            skip = skip + [last]
+        plan = suggest.day_plan(ui.months_of(child), intro, db.now(), exclude=set(skip),
+                                keep=last if sub == "m" else None)
+        if sub == "o" and not plan["new"] and skip:     # перебрали все - по колу
+            skip = []
+            plan = suggest.day_plan(ui.months_of(child), intro, db.now())
+        context.user_data["planskip"] = skip
+        context.user_data["plan_new"] = plan["new"]
+        return await _show(update, *ui.plan_tomorrow(child, plan))
+
     if action == "nxfr":
         codes = context.user_data.get("next", [])
         added = db.pantry_add(fid, codes, user.id)

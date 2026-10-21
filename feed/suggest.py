@@ -516,3 +516,59 @@ def next_products(months: int, intro: dict, stock: list[str] | None = None,
                       f"продуктів там {counts[slot]}.")
 
     return picked[:limit]
+
+
+def known_plate(months: int, intro: dict, mode: str, avoid: set[tuple[str, ...]] = frozenset(),
+                tries: int = 40) -> list[str]:
+    """Тарілка лише зі знайомого (освоєного): по одному на слот, на який щось є."""
+    known = {c for c, r in intro.items() if r["status"] == "ok"}
+    for _ in range(tries):
+        plate: list[str] = []
+        for slot, _, _ in SLOTS:
+            pool = candidates(months, intro, slot, mode, exclude=set(plate), only=known)
+            if pool:
+                plate.append(random.choice(pool))
+        if plate and tuple(sorted(plate)) not in avoid:
+            return plate
+    return []
+
+
+def day_plan(months: int, intro: dict, now_ts: int,
+             exclude: set[str] = frozenset(), keep: str | None = None) -> dict:
+    """План на завтра: один новий продукт зранку, решта дня зі знайомого.
+
+    Відгук 21.10 (Влада, #562): «не 3 нових продукти, а як міні рецепт на наступний
+    день з уже введеного». Поки триває правило трьох днів, нового немає - продовжуємо
+    той, що вводимо. Мало знайомого (<10) - новий окремо, далі - у тарілці зі знайомим.
+    """
+    hold = holding(intro, now_ts)
+    new = None
+    if not hold and keep and keep not in intro:
+        new = keep                       # «інше меню»: новий той самий, страви інші
+    elif not hold:
+        items = next_products(months, intro, limit=1, exclude=exclude)
+        new = items[0][0] if items else None
+    focus = hold[0] if hold else new
+    known = [c for c, r in intro.items() if r["status"] == "ok"]
+
+    morning = [focus] if focus else []
+    if focus and len(known) >= 10:
+        # новий у тарілці зі знайомим, з інших слотів: так видно, на що реакція
+        base = known_plate(months, intro, mode_of([focus]))
+        morning += [c for c in base if slot_of(c) != slot_of(focus)][:2]
+
+    seen: set[tuple[str, ...]] = set()
+    meals = []
+    for title, mode in (("Обід", "main"), ("Вечеря", "breakfast")):
+        plate = known_plate(months, intro, mode, seen) or known_plate(months, intro, "main", seen)
+        if plate:
+            seen.add(tuple(sorted(plate)))
+            meals.append((title, plate))
+
+    recipe = None
+    if focus:
+        ok_set = set(known) | {focus}
+        recipe = next((r for r in catalog.recipes_with([focus])
+                       if set(r["products"]) <= ok_set and r["age_from"] <= max(months, 6)), None)
+    return {"new": new, "hold": hold[0] if hold else None, "morning": morning,
+            "meals": meals, "recipe": recipe}

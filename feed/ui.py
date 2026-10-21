@@ -882,6 +882,55 @@ def new_achievement(child, got: list[tuple[str, int]]) -> tuple[str, M]:
             M([[B("🏅 Усі досягнення", callback_data="f:ach")]]))
 
 
+def plan_tomorrow(child, plan: dict) -> tuple[str, M]:
+    """План на завтра: один новий продукт і решта дня зі знайомого."""
+    months = months_of(child)
+    focus = plan["hold"] or plan["new"]
+    names = lambda codes: " + ".join(catalog.name(c).lower() for c in codes)
+    parts = ["<h3>📅 План на завтра</h3>",
+             chips(f"{esc(child['name'])}, {growth.age_text(birth_date(child))}",
+                   "з ложки" if spoon(child) else "шматочками")]
+    if plan["hold"]:
+        parts.append(f"<h4>⏳ Продовжуємо: {catalog.label(focus)}</h4>"
+                     "<p>Правило трьох днів ще триває, тож нового завтра не вводимо. "
+                     "Даємо той самий продукт зранку і дивимось реакцію.</p>")
+    elif plan["new"]:
+        prod = catalog.product(focus)
+        parts.append(f"<h4>🆕 Новий продукт: {prod['emoji']} {esc(prod['name'])}{catalog.mark_allergen(focus)}</h4>")
+    if focus:
+        alone = len(plan["morning"]) == 1
+        parts.append(f"<p><b>Сніданок{', окремо' if alone else ''}:</b> {esc(names(plan['morning']))}</p>"
+                     f"<p>{esc(catalog.serving(focus, months, spoon(child)))}</p>"
+                     "<p><i>Новий продукт - у першій половині дня, щоб до вечора побачити реакцію.</i></p>")
+    else:
+        parts.append("<p>За віком усе, що бот знає, уже введено. Тримаємо різноманіття.</p>")
+    if plan["meals"]:
+        parts.append("<h4>🍽 Решта дня - тільки знайоме</h4><ul>"
+                     + "".join(f"<li><b>{t}:</b> {esc(names(p))}</li>" for t, p in plan["meals"])
+                     + "</ul>")
+    elif focus:
+        parts.append("<p><i>Знайомих продуктів поки замало для окремих страв: решту дня - "
+                     "грудне молоко чи суміш, як зазвичай.</i></p>")
+    if plan["recipe"]:
+        r = plan["recipe"]
+        parts.append(f"<p>📖 Підійде рецепт: <b>{esc(r['title'])}</b> - усе, крім нового, вже введено.</p>")
+
+    rows = []
+    if focus:
+        rows.append([B(f"🍽 Подали: {catalog.name(focus)}", callback_data=f"f:quick:{focus}", style="success")])
+    nav = []
+    if plan["new"]:
+        nav.append(B("🔄 Інший новий", callback_data="f:plan:o"))
+    if plan["meals"]:
+        nav.append(B("🎲 Інше меню", callback_data="f:plan:m"))
+    if nav:
+        rows.append(nav)
+    if plan["recipe"]:
+        rows.append([B("📖 Рецепт", callback_data=f"f:r:{plan['recipe']['id']}")])
+    rows.append([B("‹ Що ввести далі", callback_data="f:next"), B("🏠 Головна", callback_data="f:home")])
+    return Rich("".join(parts)), M(rows)
+
+
 ACT_WINDOWS = (7, 30)
 
 
@@ -1348,6 +1397,7 @@ def next_up(child, intro: dict, items: list[tuple[str, str]], hold: list[str],
                   "<p><i>Коли переносить добре - познач «освоєно», і я одразу підкажу наступний.</i></p>"]
         rows += [[B(f"✅ Освоєно: {catalog.name(c)}", callback_data=f"f:st:{c}:ok", style="success"),
                   B("⚠️ Реакція", callback_data=f"f:react:{c}", style="danger")] for c in hold[:3]]
+        rows.append([B("📅 План на завтра", callback_data="f:plan", style="primary")])
         rows.append([B("🍽 Записати прийом їжі", callback_data="f:new"),
                      B("🏠 Головна", callback_data="f:home")])
         return Rich("".join(parts)), M(rows)
@@ -1373,6 +1423,7 @@ def next_up(child, intro: dict, items: list[tuple[str, str]], hold: list[str],
     fresh = [c for c, _ in items if c not in stock]
     rows.append([B("🔄 Інші варіанти", callback_data="f:nxo")]
                 + ([B("🧊 У холодильник", callback_data="f:nxfr")] if fresh else []))
+    rows.append([B("📅 План на завтра", callback_data="f:plan", style="primary")])
     rows.append([B("🛒 Покупки на тиждень", callback_data="f:frbuy"),
                  B("🏠 Головна", callback_data="f:home")])
     return Rich("".join(parts)), M(rows)

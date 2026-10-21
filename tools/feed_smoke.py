@@ -621,6 +621,15 @@ async def main() -> None:
     await press("f:next")
     await press("f:nxo")
     await press("f:nxo")
+    await press("f:plan")
+    assert "План на завтра" in bot.sent[-1], bot.sent[-1][:300]
+    first_new = ctx.user_data.get("plan_new")
+    await press("f:plan:m")
+    assert ctx.user_data.get("plan_new") == first_new, "«інше меню» змінило новий продукт"
+    await press("f:plan:o")
+    assert ctx.user_data.get("plan_new") != first_new or first_new is None, "«інший новий» не змінив"
+    for _ in range(4):
+        await press("f:plan:o")
     await press("f:style")
     assert db.get_kv(fam, "style") == "blw"
     print("подача: перемикач ложка/шматочки, картка продукту, інші варіанти")
