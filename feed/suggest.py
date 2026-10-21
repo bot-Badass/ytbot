@@ -237,7 +237,8 @@ def candidates(months: int, intro: dict, slot: str, mode: str,
         row = intro.get(code)
         if row and row["status"] == "avoid":
             continue
-        if allergen_keys(code) & blocked:
+        # уже освоєне з тієї ж групи лишаємо: лікар міг дозволити (21.10 масло при алергії на молоко)
+        if allergen_keys(code) & blocked and not (row and row["status"] == "ok"):
             continue
         out.append(code)
     return out
