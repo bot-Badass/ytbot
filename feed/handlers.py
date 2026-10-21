@@ -577,6 +577,11 @@ async def on_button(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         context.user_data.pop("day", None)
         return await _show(update, *ui.home(child, intro))
 
+    if action == "first":
+        # вхід з розсилки для тих, хто завів профіль до онбордингу v2
+        context.user_data["first"] = []
+        return await _send(update, *ui.first_tried(child, []))
+
     if action == "ft":
         picked = context.user_data.setdefault("first", [])
         code = parts[2]

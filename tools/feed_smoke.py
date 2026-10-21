@@ -636,6 +636,7 @@ async def main() -> None:
     await press("f:fother", mom, ctx_mom)
     assert ctx_mom.user_data.get("draft") == ["banan"], "відмічене не перейшло в тарілку"
     await press("f:fnone", mom, ctx_mom)
+    await press("f:first", mom, ctx_mom)   # вхід з розсилки для старих профілів
     print("онбординг v2: дата кнопками, перший запис 2 продукти, «Інше» і «Ще не почали»")
     await handlers.on_free_text(Update(bot, mom, text="А якщо вона їсть все?"), ctx_mom)
     assert ctx_mom.user_data.get("fb_draft"), "питання без результатів не запропоновано автору"

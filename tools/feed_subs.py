@@ -114,6 +114,78 @@ async def cmd_broadcast(text: str, send: bool, only_profile: bool) -> None:
     print(f"\nнадіслано {ok}, заблокували бота {blocked}, помилок {failed}")
 
 
+def _bot():
+    from telegram import Bot
+    env = {}
+    for line in (BASE / ".env").read_text(encoding="utf-8").splitlines():
+        if "=" in line and not line.lstrip().startswith("#"):
+            k, v = line.split("=", 1)
+            env[k.strip()] = v.strip()
+    token = os.environ.get("BOT_TOKEN", "").strip() or env.get("BOT_TOKEN", "")
+    if not token:
+        raise SystemExit("BOT_TOKEN не знайдено")
+    # бот сидить на локальному Bot API: хмарний для нього вимкнено logOut-ом
+    local = (os.environ.get("LOCAL_API_URL") or env.get("LOCAL_API_URL", "")).rstrip("/")
+    if local:
+        return Bot(token, base_url=f"{local}/bot", base_file_url=f"{local}/file/bot")
+    return Bot(token)
+
+
+def first_targets() -> list:
+    """Родини з профілем, які не відмітили жодного продукту і ще не отримували це питання."""
+    return db.q(
+        "SELECT ch.id child_id, ch.name, ch.sex, f.id family_id, "
+        "  (SELECT m.user_id FROM member m JOIN subscriber s ON s.user_id=m.user_id "
+        "   WHERE m.family_id=f.id AND s.blocked=0 ORDER BY m.added_at LIMIT 1) user_id "
+        "FROM family f JOIN child ch ON ch.family_id=f.id "
+        "WHERE f.id<>1 "                                   # родина автора
+        "  AND NOT EXISTS (SELECT 1 FROM intro WHERE child_id=ch.id) "
+        "  AND NOT EXISTS (SELECT 1 FROM meal WHERE child_id=ch.id) "
+        "  AND NOT EXISTS (SELECT 1 FROM kv WHERE family_id=f.id AND key='first_nudge') "
+        "GROUP BY f.id ORDER BY RANDOM()")
+
+
+def first_text(r) -> str:
+    verb = "пробувала" if r["sex"] == "girls" else "пробував"
+    name = str(r["name"]).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+    return (f"{name} вже щось {verb}? Відмітьте одним тапом, "
+            "і я підкажу, що вводити далі.")
+
+
+async def cmd_first(limit: int, send: bool) -> None:
+    from telegram import InlineKeyboardButton as B
+    from telegram import InlineKeyboardMarkup as M
+    from telegram.error import Forbidden, TelegramError
+
+    targets = [r for r in first_targets() if r["user_id"]][:limit]
+    print(f"{'РОЗСИЛКА' if send else 'СУХА ПРОГОНКА'}: «що вже їла», {len(targets)} родин\n")
+    if not send:
+        for r in targets[:10]:
+            print(f"  -> {r['user_id']} | {first_text(r)}")
+        print("\nНічого не надіслано. Додай --send, щоб відправити насправді.")
+        return
+
+    kb = M([[B("🥕 Відмітити, що вже їли", callback_data="f:first")]])
+    ok = blocked = failed = 0
+    async with _bot() as bot:
+        for r in targets:
+            try:
+                await bot.send_message(r["user_id"], first_text(r), reply_markup=kb)
+                ok += 1
+            except Forbidden:
+                db.mark_blocked(r["user_id"])
+                blocked += 1
+            except TelegramError as exc:
+                failed += 1
+                print(f"  {r['user_id']}: {exc}")
+                await asyncio.sleep(RATE)
+                continue
+            # мітка по відправці, не по відповіді: питання ставиться один раз
+            db.set_kv(r["family_id"], "first_nudge", str(db.now()))
+            await asyncio.sleep(RATE)
+    print(f"\nнадіслано {ok}, заблокували бота {blocked}, помилок {failed}")
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -126,10 +198,15 @@ def main() -> None:
     br.add_argument("--send", action="store_true", help="справді надіслати")
     br.add_argument("--only-profile", action="store_true",
                     help="лише тим, хто завів профіль дитини")
+    fn = sub.add_parser("first-nudge", help="питання «що вже їла» тим, хто не відмітив жодного продукту")
+    fn.add_argument("--limit", type=int, default=50)
+    fn.add_argument("--send", action="store_true", help="справді надіслати")
     args = ap.parse_args()
 
     if args.cmd == "stats":
         cmd_stats()
+    elif args.cmd == "first-nudge":
+        asyncio.run(cmd_first(args.limit, args.send))
     elif args.cmd == "export":
         cmd_export(args.out)
     else:
