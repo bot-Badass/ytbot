@@ -565,10 +565,7 @@ async def on_button(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         db.add_child(m["family_id"], name, birth, parts[2])
         context.user_data.pop("birth", None)
         child = db.child_of(user.id)
-        await _show(update, f"✅ Профіль готовий: {child['name']}, {growth.age_text(ui.birth_date(child))}.")
-        # одразу перший запис: з головної 75% так і не доходили до «Записати»
-        context.user_data["first"] = []
-        await _send(update, *ui.first_tried(child, []))
+        await _show(update, *ui.style_ask(child))
         return
 
     got = await ensure(update, context)
@@ -617,6 +614,24 @@ async def on_button(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         context.user_data["draft"] = context.user_data.pop("first", None) or []
         context.user_data["grp"] = "veg"
         return await _show(update, *ui.draft(child, _draft(context), intro, "veg", show_rare))
+
+    if action == "ostyle":
+        # онбординг: спосіб годування, далі одразу перший запис
+        # (з головної 75% так і не доходили до «Записати»)
+        db.set_kv(fid, "style", parts[2])
+        how = "з ложки" if parts[2] == "spoon" else "шматочками"
+        await _show(update, f"✅ Профіль готовий: {ui.esc(child['name'])}. Подача: {how}, "
+                            "змінити можна в налаштуваннях.")
+        context.user_data["first"] = []
+        return await _send(update, *ui.first_tried(child, []))
+
+    if action == "news":
+        db.set_kv(fid, ui.NEWS_KEY, "done")
+        if parts[2] in ("spoon", "blw"):
+            db.set_kv(fid, "style", parts[2])
+        if parts[2] == "vd":
+            return await _show(update, *ui.vitd(child, fid))
+        return await _show(update, *ui.home(child, intro))
 
     if action == "fnone":
         context.user_data.pop("first", None)

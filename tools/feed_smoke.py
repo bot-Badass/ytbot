@@ -250,6 +250,18 @@ async def main() -> None:
     await press("f:sex:girls")
     child = db.child_of(max_u.id)
     assert child and child["name"] == "Аліса", "профіль не створився"
+    # старі родини стилю не мають: картка новинок на головній, поки не натиснуть
+    await press("f:home")
+    assert "Два оновлення" in bot.sent[-1], "картки новинок немає"
+    await press("f:news:later")
+    assert "Два оновлення" not in bot.sent[-1] and db.get_kv(child["family_id"], "style") == ""
+    db.run("DELETE FROM kv WHERE key=?", (ui.NEWS_KEY,))
+    await press("f:home")
+    await press("f:news:blw")
+    assert db.get_kv(child["family_id"], "style") == "blw", "вибір з картки не збережено"
+    await press("f:home")
+    assert "Два оновлення" not in bot.sent[-1]
+    print("картка новинок: показ, «Пізніше», вибір подачі")
     print(f"профіль: {child['name']}, {growth.age_text(ui.birth_date(child))}, {child['sex']}")
 
     # ── конструктор тарілки ──
@@ -697,7 +709,9 @@ async def main() -> None:
     await press("f:bm:2026:4", mom, ctx_mom)
     await press("f:bd:2026:4:4", mom, ctx_mom)
     await press("f:sex:girls", mom, ctx_mom)
+    await press("f:ostyle:spoon", mom, ctx_mom)
     sonia = db.child_of(mom.id)
+    assert db.get_kv(sonia["family_id"], "style") == "spoon", "подача з онбордингу не лягла"
     assert sonia and sonia["birth_date"] == "2026-04-04", "дата кнопками не лягла"
     # перший запис одразу після профілю: спробуване = освоєне, без нагадувань про реакцію
     for code in ["kabachok", "garbuz", "garbuz", "garbuz"]:

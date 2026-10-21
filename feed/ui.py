@@ -147,9 +147,20 @@ def home(child, intro: dict) -> tuple[str, M]:
         parts.append("<blockquote>👀 <b>Під наглядом:</b> "
                      + ", ".join(catalog.label(c) for c in watch[:4]) + "</blockquote>")
 
+    news = news_due(child["family_id"])
+    if news:
+        parts.append("<blockquote><b>🆕 Два оновлення</b><br>"
+                     "🥄 Поради подачі тепер бувають під ложку (пюре, каші) або шматочками "
+                     "(BLW). Як годуєте ви?<br>"
+                     "☀️ Нагадування про вітамін D: у вибраний час, щодня або через день."
+                     "</blockquote>")
+
     stock = len(db.pantry_codes(child["family_id"]))
     fridge = f" · {stock}" if stock else ""
-    kb = M([
+    kb = M(([[B("🥄 З ложки", callback_data="f:news:spoon"),
+              B("✋ Шматочками", callback_data="f:news:blw")],
+             [B("☀️ Вітамін D", callback_data="f:news:vd"),
+              B("Пізніше", callback_data="f:news:later")]] if news else []) + [
         [B("🍽 Записати прийом їжі", callback_data="f:new", style="success")],
         [B(f"🧊 Холодильник{fridge}", callback_data="f:fr"),
          B("🎯 Що ввести далі", callback_data="f:next", style="primary")],
@@ -161,6 +172,33 @@ def home(child, intro: dict) -> tuple[str, M]:
 
 
 # ─────────────────────── конструктор тарілки ───────────────────────
+
+
+NEWS_KEY = "news_spoon_vitd"   # картка «два оновлення», 21.10
+NEWS_MAX_DAYS = 3
+
+
+def news_due(family_id: int) -> bool:
+    """Картка новинок на головній: поки не натиснули жодної кнопки, але не довше
+    трьох днів, коли людина заходила. Рахуємо дні, не показ: головна малюється часто."""
+    state = db.get_kv(family_id, NEWS_KEY)
+    if state == "done" or db.get_kv(family_id, "style"):
+        return False
+    today = datetime.now(TZ).date().isoformat()
+    days = state.split(",") if state else []
+    if today not in days:
+        if len(days) >= NEWS_MAX_DAYS:
+            return False
+        db.set_kv(family_id, NEWS_KEY, ",".join(days + [today]))
+    return True
+
+
+def style_ask(child) -> tuple[str, M]:
+    return (f"✅ Профіль готовий: {esc(child['name'])}, {growth.age_text(birth_date(child))}.\n\n"
+            "Як годуєте? Від цього залежить, як бот підказує подачу.",
+            M([[B("🥄 З ложки: пюре, каші", callback_data="f:ostyle:spoon")],
+               [B("✋ Шматочками (BLW)", callback_data="f:ostyle:blw")],
+               [B("🤷 Ще не знаю", callback_data="f:ostyle:blw")]]))
 
 
 def balance_hint(codes: list[str]) -> str:
