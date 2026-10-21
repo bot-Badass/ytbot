@@ -606,6 +606,17 @@ async def main() -> None:
     await press("f:style")
     assert db.get_kv(fam, "style") == "blw"
     print("подача: перемикач ложка/шматочки, картка продукту, інші варіанти")
+
+    # ── моя активність ──
+    await press("f:diary")
+    await press("f:act")
+    assert "Моя активність" in bot.sent[-1] and "Записали ви" in bot.sent[-1]
+    await press("f:act:30")
+    await press("f:act", wife, ctx_wife)
+    others = {i: i % 9 for i in range(1, 40)}
+    t, _ = ui.activity(db.child_of(max_u.id), max_u.id, 7, others)
+    assert "Місце" in str(t) or "Найближча ціль" in str(t), str(t)[:400]
+    print("моя активність: 7/30 днів, порівняння з іншими")
     await press("f:new", wife, ctx_wife)
     await press("f:sel:banan", wife, ctx_wife)
     await press("f:save:breakfast", wife, ctx_wife)

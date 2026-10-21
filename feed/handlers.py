@@ -903,6 +903,15 @@ async def on_button(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         context.user_data["await"] = {"k": "mnote", "id": int(parts[2])}
         return await _show(update, "Напиши нотатку до цього прийому одним повідомленням.")
 
+    if action == "act":
+        days = int(parts[2]) if len(parts) > 2 else 7
+        since, _, _ = ui.day_bounds(-(days - 1))
+        own = {r["family_id"] for o in feedback.owners() for r in
+               db.q("SELECT family_id FROM member WHERE user_id=?", (o,))}
+        others = db.meals_by_user(since, own)
+        others.pop(user.id, None)
+        return await _show(update, *ui.activity(child, user.id, days, others))
+
     if action == "stats":
         return await _show(update, *ui.stats(child, intro))
 

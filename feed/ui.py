@@ -791,6 +791,7 @@ def diary(child, offset: int = 0) -> tuple[str, M]:
         nav.append(B("Пізніше ›", callback_data=f"f:diary:{offset + 1}"))
     rows.append(nav)
     rows.append([B("⚠️ Реакції", callback_data="f:rxlog"), B("📊 Зведення", callback_data="f:stats")])
+    rows.append([B("🏆 Моя активність", callback_data="f:act")])
     rows.append([B("🏠 Головна", callback_data="f:home")])
     return Rich("".join(parts)), M(rows)
 
@@ -831,6 +832,63 @@ def stats(child, intro: dict) -> tuple[str, M]:
     if missing:
         rows.append([B("🎯 Що ввести далі", callback_data="f:next", style="primary")])
     rows.append([B("‹ Щоденник", callback_data="f:diary"), B("🏠 Головна", callback_data="f:home")])
+    return Rich("".join(parts)), M(rows)
+
+
+ACT_WINDOWS = (7, 30)
+
+
+def activity(child, user_id: int, days: int, others: dict[int, int]) -> tuple[str, M]:
+    """Моя активність: скільки записала саме ця людина і де вона серед інших батьків.
+    others - прийоми за той самий період у інших людей (своя родина автора не входить)."""
+    _, ts_to, today = day_bounds()
+    since, _, _ = day_bounds(-(days - 1))
+    mine = db.meal_times(child["id"], since, user_id)
+    family = db.meal_times(child["id"], since)
+    my_days = {local(t).date() for t in mine}
+    fam_days = {local(t).date() for t in db.meal_times(child["id"], since - 400 * 86400)}
+    streak, d = 0, today if today in fam_days else today - timedelta(days=1)
+    while d in fam_days:
+        streak, d = streak + 1, d - timedelta(days=1)
+    new = sum(1 for r in db.intro_map(child["id"]).values() if r["first_ts"] >= since)
+
+    period = "7 днів" if days == 7 else "30 днів"
+    parts = [f"<h3>🏆 Моя активність</h3>", chips(f"за {period}")]
+    parts.append("<table>"
+                 f"<tr><td>Записали ви</td><td>{plural(len(mine), 'прийом', 'прийоми', 'прийомів')}</td></tr>"
+                 f"<tr><td>Днів із записами</td><td>{len(my_days)} з {days}</td></tr>"
+                 f"<tr><td>Уся родина</td><td>{plural(len(family), 'прийом', 'прийоми', 'прийомів')}</td></tr>"
+                 f"<tr><td>Нових продуктів</td><td>{new}</td></tr>"
+                 f"<tr><td>Серія</td><td>{plural(streak, 'день', 'дні', 'днів')} поспіль</td></tr>"
+                 "</table>")
+
+    counts = sorted(others.values())
+    if len(counts) >= 10 and mine:
+        below = sum(1 for n in counts if n < len(mine))
+        pct = round(100 * below / len(counts))
+        median = counts[len(counts) // 2]
+        top10 = counts[int(len(counts) * 0.9)]
+        parts.append(f"<h4>Серед інших батьків</h4>")
+        place = 1 + sum(1 for n in counts if n > len(mine))
+        if pct >= 50:
+            better = f"частіше, ніж <b>{min(pct, 99)}%</b>" if place > 1 else "<b>найчастіше</b> з усіх"
+            parts.append(f"<p>Ви записуєте {better} батьків, які вели щоденник за цей час. "
+                         f"Місце: <b>{place}</b> з {len(counts) + 1}.</p>")
+        else:
+            parts.append(f"<p>Найближча ціль: {plural(median, 'прийом', 'прийоми', 'прийомів')} за "
+                         f"{period}, типовий рівень тих, хто веде щоденник. Чим більше записів, "
+                         f"тим точніші поради.</p>")
+        parts.append(f"<p>{bar(min(len(mine), top10), top10, 10)} ви: {len(mine)}</p>"
+                     f"<p><i>Типово {plural(median, 'прийом', 'прийоми', 'прийомів')} за {period}, "
+                     f"у найактивніших 10% - від {top10}. Порівнюємо з {len(counts)} "
+                     f"{'людиною' if len(counts) % 10 == 1 and len(counts) % 100 != 11 else 'людьми'}.</i></p>")
+    elif not mine:
+        parts.append("<p>За цей час ви ще нічого не записали. Перший запис - кнопка "
+                     "«🍽 Записати прийом їжі» на головній.</p>")
+
+    other = 30 if days == 7 else 7
+    rows = [[B(f"За {other} днів", callback_data=f"f:act:{other}")],
+            [B("‹ Щоденник", callback_data="f:diary"), B("🏠 Головна", callback_data="f:home")]]
     return Rich("".join(parts)), M(rows)
 
 

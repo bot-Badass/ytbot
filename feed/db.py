@@ -350,6 +350,23 @@ def set_kv(family_id: int, key: str, value: str) -> None:
         (family_id, key, value))
 
 
+def meals_by_user(since: int, exclude_families: set[int] = frozenset()) -> dict[int, int]:
+    """Скільки прийомів записав кожен дорослий від since. Для порівняння з іншими:
+    рахуємо людей, а не родини, бо в родині пишуть двоє і по-різному."""
+    rows = q("SELECT m.by_user u, COUNT(*) n, c.family_id f FROM meal m "
+             "JOIN child c ON c.id=m.child_id WHERE m.ts>=? GROUP BY m.by_user", (since,))
+    return {r["u"]: r["n"] for r in rows if r["f"] not in exclude_families}
+
+
+def meal_times(child_id: int, since: int, user_id: int | None = None) -> list[int]:
+    sql = "SELECT ts FROM meal WHERE child_id=? AND ts>=?"
+    args: tuple = (child_id, since)
+    if user_id is not None:
+        sql += " AND by_user=?"
+        args += (user_id,)
+    return [r["ts"] for r in q(sql + " ORDER BY ts", args)]
+
+
 VITD_DEFAULT_AT = "09:00"
 
 
