@@ -89,6 +89,16 @@ def products() -> dict[str, dict]:
 
 
 @functools.lru_cache(maxsize=1)
+def spoon_texts() -> dict[str, str]:
+    """Подача з ложки (пюре, каші) для родин, які не годують шматочками. 6-11 міс."""
+    path = DATA_DIR / "spoon.yaml"
+    return (_load("spoon.yaml") or {}).get("spoon", {}) if path.exists() else {}
+
+
+SPOON_BANDS = ("m6", "m9")   # з 12 місяців подача одна для всіх: шматочки зі столу
+
+
+@functools.lru_cache(maxsize=1)
 def plates() -> list[dict]:
     return _load("plates.yaml")["plates"]
 
@@ -190,11 +200,14 @@ def band_title(band: str) -> str:
     return band
 
 
-def serving(code: str, months: int) -> str:
+def serving(code: str, months: int, spoon: bool = False) -> str:
     p = product(code)
     if not p:
         return ""
-    return p["serve"].get(band_for(months), "")
+    band = band_for(months)
+    if spoon and band in SPOON_BANDS and spoon_texts().get(code):
+        return spoon_texts()[code]
+    return p["serve"].get(band, "")
 
 
 def plates_for(band: str) -> list[dict]:

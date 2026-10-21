@@ -71,6 +71,11 @@ def months_of(child) -> int:
     return growth.age_months(birth_date(child))
 
 
+def spoon(child) -> bool:
+    """Родина годує з ложки (пюре, каші) - тоді подачу показуємо під ложку, не шматочками."""
+    return db.get_kv(child["family_id"], "style") == "spoon"
+
+
 def _rows(buttons: list[B], per_row: int = 2) -> list[list[B]]:
     return [buttons[i:i + per_row] for i in range(0, len(buttons), per_row)]
 
@@ -347,7 +352,10 @@ def card(child, code: str, intro: dict) -> tuple[str, M]:
                      f"{catalog.age_label(p['from_month'])}.</blockquote>")
 
     band_title = next(t for k, lo, hi, t in catalog.AGE_BANDS if k == band)
-    parts.append(f"<h4>Як подавати зараз · {esc(band_title)}</h4><p>{esc(p['serve'][band])}</p>")
+    by_spoon = spoon(child) and band in catalog.SPOON_BANDS and catalog.spoon_texts().get(code)
+    how = "з ложки" if by_spoon else "зараз"
+    parts.append(f"<h4>Як подавати {how} · {esc(band_title)}</h4>"
+                 f"<p>{esc(catalog.serving(code, months, spoon(child)))}</p>")
     if p.get("cook"):
         steps = [x.strip() for x in re.split(r"(?<=\.)\s+(?=[А-ЯІЇЄҐ⚠])", p["cook"]) if x.strip()]
         parts.append("<h4>⏱ Готування</h4>" + (
@@ -358,6 +366,8 @@ def card(child, code: str, intro: dict) -> tuple[str, M]:
     if p.get("caution"):
         parts.append(f"<blockquote><b>⚠️ Обережно.</b> {esc(p['caution'])}</blockquote>")
     others = [(t, p["serve"][k]) for k, lo, hi, t in catalog.AGE_BANDS if k != band]
+    if by_spoon:
+        others.insert(0, (f"Шматочками, {band_title}", p["serve"][band]))
     if others:
         parts.append("<h4>Інший вік</h4><blockquote expandable>"
                      + "<br>".join(f"<b>{esc(t)}:</b> {esc(v)}" for t, v in others)
@@ -487,7 +497,7 @@ def gen_plate_card(child, codes: list[str], intro: dict, back: str = "f:gen") ->
     for code in codes:
         prod = catalog.product(code)
         lines.append(f"{mark(code, intro, months)} {prod['emoji']} <b>{esc(prod['name'])}</b>")
-        lines.append(f"   {esc(catalog.serving(code, months))}")
+        lines.append(f"   {esc(catalog.serving(code, months, spoon(child)))}")
     fresh = [c for c in codes if c not in intro]
     lines += ["", f"<i>{esc(balance_hint(codes))}</i>"]
     if len(fresh) == 1:
@@ -533,7 +543,7 @@ def plate_card(child, pid: str, intro: dict) -> tuple[str, M]:
     for code in p["items"]:
         prod = catalog.product(code)
         lines.append(f"{mark(code, intro, months)} {prod['emoji']} <b>{esc(prod['name'])}</b>")
-        lines.append(f"   {esc(catalog.serving(code, months))}")
+        lines.append(f"   {esc(catalog.serving(code, months, spoon(child)))}")
     if p.get("note"):
         lines += ["", f"<i>{esc(p['note'])}</i>"]
     rows = [[B("🍽 Подали цю тарілку", callback_data=f"f:plu:{pid}")],
@@ -832,19 +842,71 @@ def settings(child, family_id: int, remind: bool, show_rare: bool = False) -> tu
              f"{'дівчинка' if child['sex'] == 'girls' else 'хлопчик'}",
              f"Доступ мають: " + ", ".join(esc(m["name"]) for m in members),
              f"Нагадування: {'увімкнені' if remind else 'вимкнені'}",
+             f"Вітамін D: {vitd_summary(db.vitd_conf(family_id))}",
+             f"Подача: {'з ложки (пюре, каші)' if spoon(child) else 'шматочками (BLW)'}",
              f"Рідкісні продукти: {'показані' if show_rare else 'сховані'}",
              "",
              "<i>Бібліотека продуктів - довідка на основі рекомендацій ВООЗ, AAP і EFSA. "
              "Вона не замінює педіатра.</i>"]
     rows = [[B("➕ Додати дорослого", callback_data="f:inv")],
             [B(("🔕 Вимкнути" if remind else "🔔 Увімкнути") + " нагадування", callback_data="f:rem")],
+            [B("☀️ Вітамін D", callback_data="f:vd"),
+             B("🥄 Подача: " + ("шматочками" if spoon(child) else "з ложки"), callback_data="f:style")],
             [B(("🙈 Сховати" if show_rare else "🥬 Показати") + " рідкісні продукти",
                callback_data="f:rare:set")],
             [B("✏️ Змінити дату народження", callback_data="f:editbirth")],
-            [B("💬 Написати автору", callback_data="f:fb")],
+            [B("💬 Зворотний звʼязок", callback_data="f:fb")],
             [B("ℹ️ Інструкція", callback_data="f:guide"),
              B("🔒 Дані і приватність", callback_data="f:privacy")],
             [B("🏠 Головна", callback_data="f:home")]]
+    return "\n".join(lines), M(rows)
+
+
+VITD_TIMES = ("07:00", "08:00", "09:00", "10:00", "12:00", "18:00", "20:00", "21:00")
+
+
+def vitd_summary(conf: dict) -> str:
+    if not conf["on"]:
+        return "вимкнено"
+    return f"{'щодня' if conf['every'] == 1 else 'через день'} о {conf['at']}"
+
+
+def vitd(child, family_id: int) -> tuple[str, M]:
+    conf = db.vitd_conf(family_id)
+    members = db.family_members(family_id)
+    lines = ["☀️ <b>Вітамін D</b>", "",
+             "Одне повідомлення у вибраний час. Без повторів: якщо пропустили, "
+             "бот не нагадує ще раз.", ""]
+    if conf["on"]:
+        start = date.fromisoformat(conf["from"]).strftime("%d.%m.%Y")
+        who = next((m["name"] for m in members if m["user_id"] == conf["chat"]), None)
+        lines += [f"Зараз: <b>{vitd_summary(conf)}</b>",
+                  f"Відлік від: {start}",
+                  f"Кому: {esc(who) if who else 'всім дорослим'}"]
+    else:
+        lines.append("Зараз: <b>вимкнено</b>")
+
+    def mark(on: bool, text: str) -> str:
+        return ("✓ " if on else "") + text
+
+    rows = [[B("🔕 Вимкнути" if conf["on"] else "🔔 Увімкнути", callback_data="f:vd:on",
+               style=None if conf["on"] else "success")]]
+    if conf["on"]:
+        rows.append([B(mark(conf["every"] == 1, "Щодня"), callback_data="f:vd:ev:1"),
+                     B(mark(conf["every"] == 2, "Через день"), callback_data="f:vd:ev:2")])
+        if conf["every"] == 2:
+            today = datetime.now(TZ).date()
+            rows.append([B(mark(conf["from"] == today.isoformat(), "Сьогодні день D"),
+                           callback_data="f:vd:from:0"),
+                         B(mark(conf["from"] == (today + timedelta(days=1)).isoformat(),
+                                "Завтра день D"), callback_data="f:vd:from:1")])
+        rows += _rows([B(mark(conf["at"] == t, t), callback_data=f"f:vd:at:{t.replace(':', '')}")
+                       for t in VITD_TIMES], 4)
+        rows.append([B("✏️ Свій час", callback_data="f:vd:attext")])
+        if len(members) > 1:
+            rows.append([B(mark(conf["chat"] is None, "Всім дорослим"), callback_data="f:vd:to:all"),
+                         B(mark(conf["chat"] is not None, "Тільки мені"), callback_data="f:vd:to:me")])
+    rows.append([B("‹ Налаштування", callback_data="f:set"), B("🏠 Головна", callback_data="f:home")])
     return "\n".join(lines), M(rows)
 
 
@@ -1158,15 +1220,16 @@ def next_up(child, intro: dict, items: list[tuple[str, str]], hold: list[str],
     for code, why in items:
         prod = catalog.product(code)
         parts.append(f"<h4>{prod['emoji']} {esc(prod['name'])}{catalog.mark_allergen(code)} · {catalog.age_label(prod['from_month'])}</h4>"
-                     f"<p><i>{esc(why)}</i></p><p>{esc(catalog.serving(code, months))}</p>")
-    parts.append("<p><i>Вводимо по одному і тримаємо 2-3 дні поспіль.</i></p>")
+                     f"<p><i>{esc(why)}</i></p><p>{esc(catalog.serving(code, months, spoon(child)))}</p>")
+    parts.append("<p><i>Вводимо по одному і тримаємо 2-3 дні поспіль. Це підказка, не "
+                 "черга: можна дати будь-який інший продукт і позначити його в «Продуктах».</i></p>")
 
     for code, _ in items:
         rows.append([B(f"🍽 Подали: {catalog.name(code)}", callback_data=f"f:quick:{code}", style="success"),
                      B("🥕 Картка", callback_data=f"f:p:{code}")])
     fresh = [c for c, _ in items if c not in stock]
-    if fresh:
-        rows.append([B("🧊 Додати в холодильник", callback_data="f:nxfr")])
+    rows.append([B("🔄 Інші варіанти", callback_data="f:nxo")]
+                + ([B("🧊 У холодильник", callback_data="f:nxfr")] if fresh else []))
     rows.append([B("🛒 Покупки на тиждень", callback_data="f:frbuy"),
                  B("🏠 Головна", callback_data="f:home")])
     return Rich("".join(parts)), M(rows)

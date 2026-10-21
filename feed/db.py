@@ -350,6 +350,21 @@ def set_kv(family_id: int, key: str, value: str) -> None:
         (family_id, key, value))
 
 
+VITD_DEFAULT_AT = "09:00"
+
+
+def vitd_conf(family_id: int) -> dict:
+    """Нагадування про вітамін D. Увімкнене = є vitd_from і vitd_on не "0".
+    every: 1 щодня, 2 через день (рахуємо від vitd_from); chat: один дорослий або всі."""
+    start = get_kv(family_id, "vitd_from")
+    chat = get_kv(family_id, "vitd_chat")
+    return {"on": bool(start) and get_kv(family_id, "vitd_on", "1") == "1",
+            "from": start,
+            "every": int(get_kv(family_id, "vitd_every", "2")),
+            "at": get_kv(family_id, "vitd_at", "06:30" if start else VITD_DEFAULT_AT),
+            "chat": int(chat) if chat else None}
+
+
 def add_nudge(child_id: int, code: str, due_ts: int, kind: str) -> None:
     exists = q1("SELECT id FROM nudge WHERE child_id=? AND code=? AND kind=? AND done=0",
                 (child_id, code, kind))

@@ -193,10 +193,27 @@ def mode_of(codes: list[str]) -> str:
     return random.choice(["main", "breakfast"])
 
 
+def allergen_keys(code: str) -> set[str]:
+    """«молоко (сліди)», «пшениця, глютен» -> {"молоко"}, {"пшениця", "глютен"}."""
+    raw = (catalog.product(code) or {}).get("allergen") or ""
+    return {part.split("(")[0].strip() for part in raw.split(",") if part.split("(")[0].strip()}
+
+
+def blocked_allergens(intro: dict) -> set[str]:
+    """Алергени продуктів, позначених «не підходить». Реакція на йогурт = реакція на
+    білок молока, тож решту молочного теж не радимо (21.10: кропивʼянка, лікар заборонив)."""
+    out: set[str] = set()
+    for code, row in intro.items():
+        if row["status"] == "avoid":
+            out |= allergen_keys(code)
+    return out
+
+
 def candidates(months: int, intro: dict, slot: str, mode: str,
                exclude: set[str] = frozenset(),
                only: set[str] | None = None) -> list[str]:
     out = []
+    blocked = blocked_allergens(intro)
     for code, product in catalog.products().items():
         if code in exclude or product["group"] == "other":
             continue
@@ -219,6 +236,8 @@ def candidates(months: int, intro: dict, slot: str, mode: str,
             continue
         row = intro.get(code)
         if row and row["status"] == "avoid":
+            continue
+        if allergen_keys(code) & blocked:
             continue
         out.append(code)
     return out
@@ -444,7 +463,7 @@ def slot_coverage(intro: dict) -> dict[str, int]:
 
 
 def next_products(months: int, intro: dict, stock: list[str] | None = None,
-                  limit: int = 3) -> list[tuple[str, str]]:
+                  limit: int = 3, exclude: frozenset[str] | set[str] = frozenset()) -> list[tuple[str, str]]:
     """Що логічно ввести наступним. Пари (код, чому саме він).
 
     Порядок простий і його видно очима: спершу алерген, якого ще не пробували
@@ -454,10 +473,12 @@ def next_products(months: int, intro: dict, stock: list[str] | None = None,
     stock = set(stock or [])
     counts = slot_coverage(intro)
     lean = sorted(counts, key=lambda s: counts[s])
+    blocked = blocked_allergens(intro)
 
     def ok(code: str) -> bool:
         p = catalog.product(code)
-        return bool(p) and code not in intro and code not in NEVER \
+        return bool(p) and code not in intro and code not in NEVER and code not in exclude \
+            and not allergen_keys(code) & blocked \
             and p.get("plate") is not False and not p.get("rare") \
             and p["group"] != "other" and p["from_month"] <= months
 

@@ -12,7 +12,7 @@ from telegram import ReplyKeyboardRemove, Update
 from telegram.constants import ParseMode
 from telegram.ext import ApplicationHandlerStop, ContextTypes
 
-from . import catalog, db, feedback, growth, rich, search, suggest, ui
+from . import catalog, db, feedback, growth, reminders, rich, search, suggest, ui
 
 log = logging.getLogger("feed")
 MAX_PLATE = 12                        # 6 не вистачало: каша+фрукти+олія+… легко дають 7-8
@@ -252,6 +252,18 @@ async def on_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         child = db.child_of(user.id)
         if child:
             await _send(update, *ui.home(child, db.intro_map(child["id"])))
+        raise ApplicationHandlerStop
+
+    if kind == "vdtime":
+        m = re.fullmatch(r"(\d{1,2})[:.\s](\d{2})", text)
+        if not m or int(m[1]) > 23 or int(m[2]) > 59:
+            await update.message.reply_text("Не зрозумів час. Напиши як 07:30.")
+            raise ApplicationHandlerStop
+        context.user_data.pop("await", None)
+        child = db.child_of(user.id)
+        db.set_kv(child["family_id"], "vitd_at", f"{int(m[1]):02d}:{m[2]}")
+        reminders.vitd_job(context.job_queue, child["family_id"])
+        await _send(update, *ui.vitd(child, child["family_id"]))
         raise ApplicationHandlerStop
 
     if kind == "child_name":
@@ -751,10 +763,18 @@ async def on_button(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             return await _show(update, *ui.settings(child, fid, remind, show_rare))
         return await _show(update, *ui.library(child, intro, show_rare))
 
-    if action == "next":
+    if action in ("next", "nxo"):
         stock = db.pantry_codes(fid)
         hold = suggest.holding(intro, db.now())
-        items = [] if hold else suggest.next_products(ui.months_of(child), intro, stock)
+        # «Інші варіанти»: показане відкладаємо, поки не скінчиться все, тоді по колу
+        skip = context.user_data.get("nxskip", []) + context.user_data.get("next", []) \
+            if action == "nxo" else []
+        items = [] if hold else suggest.next_products(ui.months_of(child), intro, stock,
+                                                      exclude=set(skip))
+        if not items and skip and not hold:
+            skip = []
+            items = suggest.next_products(ui.months_of(child), intro, stock)
+        context.user_data["nxskip"] = skip
         context.user_data["next"] = [c for c, _ in items]
         return await _show(update, *ui.next_up(child, intro, items, hold, stock))
 
@@ -885,6 +905,38 @@ async def on_button(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if action == "set":
         remind = db.get_kv(fid, "remind", "1") == "1"
         return await _show(update, *ui.settings(child, fid, remind, show_rare))
+
+    if action == "style":
+        db.set_kv(fid, "style", "blw" if ui.spoon(child) else "spoon")
+        remind = db.get_kv(fid, "remind", "1") == "1"
+        return await _show(update, *ui.settings(child, fid, remind, show_rare))
+
+    if action == "vd":
+        sub = parts[2] if len(parts) > 2 else ""
+        conf = db.vitd_conf(fid)
+        today = datetime.now(ui.TZ).date()
+        if sub == "on":
+            if not conf["on"] and not conf["from"]:
+                db.set_kv(fid, "vitd_from", today.isoformat())
+                db.set_kv(fid, "vitd_at", db.VITD_DEFAULT_AT)
+            db.set_kv(fid, "vitd_on", "0" if conf["on"] else "1")
+        elif sub == "ev":
+            db.set_kv(fid, "vitd_every", parts[3])
+        elif sub == "from":
+            db.set_kv(fid, "vitd_from", (today + timedelta(days=int(parts[3]))).isoformat())
+        elif sub == "at":
+            db.set_kv(fid, "vitd_at", f"{parts[3][:2]}:{parts[3][2:]}")
+        elif sub == "to":
+            db.set_kv(fid, "vitd_chat", str(user.id) if parts[3] == "me" else "")
+        elif sub == "attext":
+            context.user_data["await"] = {"k": "vdtime"}
+            return await _show(update, "Час нагадування. Наприклад: 07:30")
+        reminders.vitd_job(context.job_queue, fid)
+        return await _show(update, *ui.vitd(child, fid))
+
+    if action == "vdok":
+        stamp = datetime.now(ui.TZ).strftime("%H:%M")
+        return await _show(update, f"☀️ Вітамін D: дали ✅ {stamp}")
 
     if action == "rem":
         cur = db.get_kv(fid, "remind", "1") == "1"

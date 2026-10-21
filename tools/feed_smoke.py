@@ -23,7 +23,7 @@ from feed import db  # noqa: E402
 
 db.DB_PATH = Path(tempfile.mkdtemp()) / "smoke.sqlite3"
 
-from feed import catalog, feedback, growth, handlers, rich, suggest, ui  # noqa: E402
+from feed import catalog, feedback, growth, handlers, reminders, rich, suggest, ui  # noqa: E402
 from telegram import InlineKeyboardMarkup as M  # noqa: E402
 from telegram.ext import ApplicationHandlerStop  # noqa: E402
 
@@ -188,11 +188,34 @@ class Update:
         return self._bot
 
 
+class _Job:
+    def __init__(self, jq, name, at, data):
+        self.jq, self.name, self.at, self.data = jq, name, at, data
+
+    def schedule_removal(self):
+        self.jq.jobs.remove(self)
+
+
+class JobQueue:
+    """Лише облік: які щоденні задачі стоять і на котру."""
+    def __init__(self):
+        self.jobs: list[_Job] = []
+
+    def run_daily(self, callback, time, name=None, data=None):
+        self.jobs.append(_Job(self, name, time, data))
+
+    def get_jobs_by_name(self, name):
+        return [j for j in self.jobs if j.name == name]
+
+
 class Context:
+    jq = JobQueue()   # одна черга на всіх, як у справжньому застосунку
+
     def __init__(self, bot, args=None):
         self.bot = bot
         self.args = args or []
         self.user_data: dict = {}
+        self.job_queue = Context.jq
 
 
 async def main() -> None:
@@ -518,6 +541,59 @@ async def main() -> None:
     await press("f:joinask", wife, ctx_wife)
     await say(code, wife, ctx_wife)
     assert db.child_of(wife.id)["id"] == child["id"], "дружина не бачить ту саму дитину"
+
+    # ── вітамін D: одне нагадування у вибраний час, своя задача на родину ──
+    fam = db.member(max_u.id)["family_id"]
+    jobs = lambda: Context.jq.get_jobs_by_name(f"feed_vitd:{fam}")
+    await press("f:set")
+    await press("f:vd")
+    assert not db.vitd_conf(fam)["on"] and not jobs()
+    await press("f:vd:on")
+    conf = db.vitd_conf(fam)
+    assert conf["on"] and conf["at"] == db.VITD_DEFAULT_AT and conf["every"] == 2, conf
+    assert len(jobs()) == 1 and jobs()[0].at.hour == 9
+    await press("f:vd:ev:1")
+    await press("f:vd:ev:2")
+    await press("f:vd:from:1")
+    await press("f:vd:at:0730")
+    assert len(jobs()) == 1 and (jobs()[0].at.hour, jobs()[0].at.minute) == (7, 30), "задача не переставилась"
+    await press("f:vd:attext")
+    await say("25:00")
+    await say("20.15")
+    assert db.vitd_conf(fam)["at"] == "20:15" and jobs()[0].at.hour == 20
+    await press("f:vd:to:me")
+    assert db.vitd_conf(fam)["chat"] == max_u.id
+    await press("f:vd:to:all")
+    assert db.vitd_conf(fam)["chat"] is None
+    tick = Context(bot)
+    tick.job = _Job(Context.jq, "t", None, fam)
+    await press("f:vd:from:0")
+    n = len(bot.sent)
+    await reminders.vitamin_d(tick)
+    got = [t for t in bot.sent[n:] if "вітамін D" in t]
+    assert len(got) == 2, f"день D: чекали обом дорослим, прийшло {len(got)}"
+    await press("f:vd:from:1")
+    n = len(bot.sent)
+    await reminders.vitamin_d(tick)
+    assert not any("вітамін D" in t for t in bot.sent[n:]), "через день: прийшло не в свій день"
+    await press("f:vdok")
+    await press("f:vd:on")
+    assert not db.vitd_conf(fam)["on"] and not jobs(), "вимкнене лишило задачу"
+    await press("f:vd:on")
+    assert db.vitd_conf(fam)["at"] == "20:15", "повторне увімкнення скинуло час"
+    print("вітамін D: вкл/викл, частота, день відліку, час кнопкою і текстом, кому; задача одна")
+
+    # ── подача з ложки ──
+    await press("f:style")
+    assert db.get_kv(fam, "style") == "spoon"
+    await press("f:p:makarony")
+    assert "з ложки" in bot.sent[-1] and "Шматочками" in bot.sent[-1], bot.sent[-1][:300]
+    await press("f:next")
+    await press("f:nxo")
+    await press("f:nxo")
+    await press("f:style")
+    assert db.get_kv(fam, "style") == "blw"
+    print("подача: перемикач ложка/шматочки, картка продукту, інші варіанти")
     await press("f:new", wife, ctx_wife)
     await press("f:sel:banan", wife, ctx_wife)
     await press("f:save:breakfast", wife, ctx_wife)
@@ -527,7 +603,6 @@ async def main() -> None:
 
     # ── нагадування ──
     db.run("UPDATE nudge SET due_ts=? WHERE done=0", (db.now() - 10,))
-    from feed import reminders
     before = len(bot.sent)
     await reminders.evening_digest(Context(bot))
     digests = [s for s in bot.sent[before:] if s.startswith("<b>🌙")]

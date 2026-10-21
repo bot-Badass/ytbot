@@ -11,6 +11,7 @@ from __future__ import annotations
 import logging
 from datetime import date, datetime, time
 
+from telegram import InlineKeyboardButton as B
 from telegram import InlineKeyboardMarkup as M
 from telegram.error import TelegramError
 from telegram.ext import Application, ContextTypes
@@ -22,7 +23,6 @@ log = logging.getLogger("feed.reminders")
 DIGEST_AT = time(20, 30, tzinfo=ui.TZ)
 STALE_DAYS = 7      # недоставлене нагадування не висить у базі вічно
 ACTIVE_DAYS = 3     # про порожній день пишемо лише тим, хто справді веде щоденник
-VITD_AT = time(6, 30, tzinfo=ui.TZ)
 
 
 def _remind_on(family_id: int) -> bool:
@@ -105,19 +105,38 @@ async def _one(context: ContextTypes.DEFAULT_TYPE, child, now: int,
             db.close_nudge(nid)
 
 
+VITD_BTN = B("✅ Дали", callback_data="f:vdok")
+
+
 async def vitamin_d(context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Вітамін D через день. Вмикається рядками в kv, UI немає: vitd_from = перший
-    день (ISO), vitd_chat = кому слати. Не залежить від перемикача «remind»."""
+    """Одне нагадування родині у її час. Своя задача на кожну родину (vitd_job), тому
+    ніякого сканування і повторів: не дали - бот мовчить до наступного дня D."""
+    family_id = context.job.data
+    conf = db.vitd_conf(family_id)
+    if not conf["on"]:
+        return
     today = datetime.now(ui.TZ).date()
-    for row in db.q("SELECT family_id, value FROM kv WHERE key='vitd_from'"):
-        try:
-            if (today - date.fromisoformat(row["value"])).days % 2:
-                continue
-            chat = db.get_kv(row["family_id"], "vitd_chat")
-            for chat_id in ([int(chat)] if chat else db.family_chats(row["family_id"])):
-                await _send(context, chat_id, "☀️ Нагадування: сьогодні вітамін D", None)
-        except Exception:
-            log.exception("вітамін D для родини %s не надіслано", row["family_id"])
+    try:
+        if conf["every"] == 2 and (today - date.fromisoformat(conf["from"])).days % 2:
+            return
+        for chat_id in ([conf["chat"]] if conf["chat"] else db.family_chats(family_id)):
+            await _send(context, chat_id, "☀️ Нагадування: сьогодні вітамін D", M([[VITD_BTN]]))
+    except Exception:
+        log.exception("вітамін D для родини %s не надіслано", family_id)
+
+
+def vitd_job(jq, family_id: int) -> None:
+    """(Пере)ставить щоденну задачу родини на її час. Викликається при старті і після
+    кожної зміни в налаштуваннях."""
+    if jq is None:
+        return
+    name = f"feed_vitd:{family_id}"
+    for job in jq.get_jobs_by_name(name):
+        job.schedule_removal()
+    conf = db.vitd_conf(family_id)
+    if conf["on"]:
+        hh, mm = map(int, conf["at"].split(":"))
+        jq.run_daily(vitamin_d, time=time(hh, mm, tzinfo=ui.TZ), name=name, data=family_id)
 
 
 def install(app: Application) -> None:
@@ -126,5 +145,6 @@ def install(app: Application) -> None:
         log.warning("JobQueue недоступна - нагадувань не буде (постав APScheduler)")
         return
     jq.run_daily(evening_digest, time=DIGEST_AT, name="feed_evening")
-    jq.run_daily(vitamin_d, time=VITD_AT, name="feed_vitd")
+    for row in db.q("SELECT family_id FROM kv WHERE key='vitd_from'"):
+        vitd_job(jq, row["family_id"])
     log.info("нагадування прикорму: один підсумок на родину о %s", DIGEST_AT.strftime("%H:%M"))
