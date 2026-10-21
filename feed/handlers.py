@@ -12,7 +12,7 @@ from telegram import ReplyKeyboardRemove, Update
 from telegram.constants import ParseMode
 from telegram.ext import ApplicationHandlerStop, ContextTypes
 
-from . import achievements, catalog, db, feedback, growth, reminders, rich, search, suggest, ui
+from . import achievements, cards, catalog, db, feedback, growth, reminders, rich, search, suggest, ui
 
 log = logging.getLogger("feed")
 MAX_PLATE = 12                        # 6 не вистачало: каша+фрукти+олія+… легко дають 7-8
@@ -494,8 +494,20 @@ async def on_button(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         return
     try:
         got = achievements.sync(child)
-        if got:
-            await _send(update, *ui.new_achievement(child, got))
+        if not got:
+            return
+        # велика віха - картинкою (одна, найстарша за рівнем), решта - текстом
+        big = [g for g in got if g in cards.BIG]
+        text, kb = ui.new_achievement(child, got)
+        if big:
+            try:
+                png = await cards.render(cards.for_achievement(child, *big[-1]))
+                await context.bot.send_photo(user.id, png, caption=text, parse_mode=ParseMode.HTML,
+                                             reply_markup=kb)
+                return
+            except Exception:
+                log.exception("картка досягнення %s для дитини %s", big[-1], child["id"])
+        await _send(update, text, kb)
     except Exception:
         log.exception("досягнення для дитини %s", child["id"])
 

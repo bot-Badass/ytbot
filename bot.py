@@ -37,6 +37,7 @@ from telegram.ext import (
 )
 
 from feed import handlers as feed
+from feed import cards as feed_cards
 from feed import feedback as feed_feedback
 from feed import reminders as feed_reminders
 
@@ -562,6 +563,7 @@ def main() -> None:
     app.add_error_handler(on_error)
     feed_reminders.install(app)
     feed_feedback.install(app)
+    feed_cards.install(app)
 
     log.info("бот стартує: прикорм + YouTube, ліміт %s МБ, паралельно %s", MAX_UPLOAD_MB, MAX_PARALLEL)
     app.run_polling(drop_pending_updates=True, allowed_updates=Update.ALL_TYPES)

@@ -112,6 +112,7 @@ class Sent(list):
 class Bot:
     def __init__(self):
         self.sent: list[str] = Sent()
+        self.photos: list[tuple[int, str]] = []
         self.to: list[tuple[int, str]] = []   # кому пішло через send_message
         self.next_id = 1
 
@@ -128,6 +129,12 @@ class Bot:
         check_text("bot.edit", text)
         check_kb("bot.edit", kw.get("reply_markup"))
         self.sent.append(text)
+
+    async def send_photo(self, chat_id, photo, caption="", **kw):
+        check_text("bot.photo", caption)
+        check_kb("bot.photo", kw.get("reply_markup"))
+        self.photos.append((chat_id, caption))
+        self.sent.append(caption)
 
     async def send_message(self, chat_id, text, **kw):
         check_text("bot.send", text)
@@ -643,6 +650,25 @@ async def main() -> None:
     t, _ = ui.new_achievement(alisa, [("taste", 25), ("brave", 1)])
     assert "Нові досягнення" in t
     print(f"досягнення: {len(bot.sent.ach)} повідомлень, без повторів, альбом і значки на головній")
+
+    # картки: HTML кожного шаблону збирається; браузер у смоуці не запускаємо
+    from feed import cards
+    for key, lvl in sorted(cards.BIG):
+        assert "MalenkyiVsesvitBot" in cards.for_achievement(alisa, key, lvl)
+    assert cards.for_achievement(alisa, "taste", 5) is None
+    real_render = cards.render
+
+    async def fake_render(page):
+        return b"png"
+    cards.render = fake_render
+    db.mark_tried(alisa["id"], [c for c in catalog.products() if not catalog.product(c).get("allergen")][:30])
+    await press("f:home")
+    assert bot.photos and "Дослідник смаку" in bot.photos[-1][1], "велика віха без картки"
+    cards.render = real_render
+    from datetime import datetime as _dt
+    now = _dt.now(ui.TZ)
+    assert cards.month(alisa, now.year, now.month) is None or "Підсумок" in cards.month(alisa, now.year, now.month)
+    print(f"картки: {len(cards.BIG)} шаблонів віх, фото з підписом, підсумок місяця")
     await press("f:new", wife, ctx_wife)
     await press("f:sel:banan", wife, ctx_wife)
     await press("f:save:breakfast", wife, ctx_wife)
