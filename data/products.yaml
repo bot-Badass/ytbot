@@ -329,7 +329,7 @@ products:
   caution: "Кісточка. Курага - тільки дрібно посічена і розмочена, ціла сушена дуже липка."
 
 - code: chornytsia
-  name: Чорниця
+  name: Лохина
   emoji: 🫐
   group: fruit
   style: breakfast
@@ -434,7 +434,6 @@ products:
   group: grain
   style: breakfast
   from_month: 6
-  allergen: "глютен (сліди, якщо не марковано без глютену)"
   choking: low
   serve:
     m6: "Густа каша на воді, грудному молоці або суміші. Густа тримається на ложці - дитині легше."
