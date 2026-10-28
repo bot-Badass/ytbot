@@ -613,6 +613,11 @@ async def _on_button(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
         context.user_data.pop("day", None)
         return await _show(update, *ui.home(child, intro))
 
+    if action == "prep":
+        if len(parts) > 2 and parts[2] == "week":
+            return await _show(update, *ui.prep_week(child, intro, db.pantry_codes(fid)))
+        return await _show(update, *ui.prep(child))
+
     if action == "first":
         # вхід з розсилки для тих, хто завів профіль до онбордингу v2
         context.user_data["first"] = []

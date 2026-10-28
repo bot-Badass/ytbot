@@ -71,6 +71,14 @@ def months_of(child) -> int:
     return growth.age_months(birth_date(child))
 
 
+PREP_UNTIL = 6      # місяців: до цього віку головна показує режим «Готуємось»
+
+
+def days_to_start(child, today: date | None = None) -> int:
+    """Скільки діб до 6 місяців. 0 і менше - вже виповнилось."""
+    return (growth.month_date(birth_date(child), PREP_UNTIL) - (today or datetime.now(TZ).date())).days
+
+
 def spoon(child) -> bool:
     """Родина годує з ложки (пюре, каші) - тоді подачу показуємо під ложку, не шматочками."""
     return db.get_kv(child["family_id"], "style") == "spoon"
@@ -151,6 +159,12 @@ def home(child, intro: dict) -> tuple[str, M]:
         parts.append("<blockquote>👀 <b>Під наглядом:</b> "
                      + ", ".join(catalog.label(c) for c in watch[:4]) + "</blockquote>")
 
+    prep_left = days_to_start(child) if months < PREP_UNTIL else 0
+    if prep_left > 0:
+        parts.append("<blockquote><b>🌱 Готуємось до прикорму</b><br>"
+                     f"До {PREP_UNTIL} місяців {_days_left(prep_left)}. Ознаки готовності, що підготувати "
+                     "і план першого тижня - у розділі «Готуємось».</blockquote>")
+
     news = news_due(child["family_id"])
     if news:
         parts.append("<blockquote><b>🆕 Два оновлення</b><br>"
@@ -161,7 +175,8 @@ def home(child, intro: dict) -> tuple[str, M]:
 
     stock = len(db.pantry_codes(child["family_id"]))
     fridge = f" · {stock}" if stock else ""
-    kb = M(([[B("🥄 З ложки", callback_data="f:news:spoon"),
+    kb = M(([[B("🌱 Готуємось", callback_data="f:prep", style="primary")]] if prep_left > 0 else [])
+           + ([[B("🥄 З ложки", callback_data="f:news:spoon"),
               B("✋ Шматочками", callback_data="f:news:blw")],
              [B("☀️ Вітамін D", callback_data="f:news:vd"),
               B("Пізніше", callback_data="f:news:later")]] if news else []) + [
@@ -173,6 +188,73 @@ def home(child, intro: dict) -> tuple[str, M]:
         [B("🏅 Досягнення", callback_data="f:ach"), B("⚙️ Налаштування", callback_data="f:set")],
     ])
     return Rich("".join(parts)), kb
+
+
+def _days_left(n: int) -> str:
+    if n == 1:
+        return "лишився 1 день, починаємо завтра"
+    word = "лишився" if n % 10 == 1 and n % 100 != 11 else "лишилось"
+    return f"{word} {plural(n, 'день', 'дні', 'днів')}"
+
+
+# ─────────────────────── режим «Готуємось» ───────────────────────
+
+PREP_SOURCE = "<i>Довідка на основі рекомендацій ВООЗ, AAP, EFSA і Solid Starts.</i>"
+PREP_FIRST_DAYS = 3   # правило трьох днів: один новий продукт тримаємо 2-3 дні
+
+
+def prep(child) -> tuple[str, M]:
+    """Розділ «Готуємось»: ознаки готовності і що підготувати. Доступний у будь-якому віці."""
+    left = days_to_start(child)
+    when = f"до {PREP_UNTIL} місяців {_days_left(left)}" if left > 0 else f"{PREP_UNTIL} місяців уже є"
+    parts = ["<h3>🌱 Готуємось до прикорму</h3>",
+             chips(f"{esc(child['name'])}, {growth.age_text(birth_date(child))}", when),
+             "<p>Прикорм починають близько 6 місяців, не раніше 4. Дивимось на вік "
+             "і на ці ознаки разом.</p>",
+             "<h4>✅ Ознаки готовності</h4><ul>"
+             "<li>сидить з підтримкою і тримає голову</li>"
+             "<li>зник рефлекс виштовхування язиком: ложка в роті вже не виштовхується сама</li>"
+             "<li>цікавиться їжею: тягнеться до тарілки, відкриває рот на ложку</li></ul>",
+             "<h4>🪑 Що підготувати</h4><ul>"
+             "<li>стільчик для годування зі стійкою опорою для спини і ніг</li>"
+             "<li>м'яка ложка з вузьким краєм</li>"
+             "<li>миска на присосці і слинявчик</li>"
+             "<li>чашка або поїльник для знайомства з водою</li></ul>",
+             "<p>Грудне молоко чи суміш лишається основою харчування, прикорм додається поступово.</p>",
+             PREP_SOURCE]
+    rows = [[B("📅 План першого тижня", callback_data="f:prep:week", style="primary")],
+            [B("🥕 Продукти", callback_data="f:lib"), B("📔 Щоденник", callback_data="f:diary")],
+            [B("🏠 Головна", callback_data="f:home")]]
+    return Rich("".join(parts)), M(rows)
+
+
+def prep_week(child, intro: dict, stock: list[str] | None = None) -> tuple[str, M]:
+    """План першого тижня з тих самих правил, що й «Що ввести далі» (suggest.next_products)."""
+    months = max(months_of(child), PREP_UNTIL)
+    items = suggest.next_products(months, intro, stock, limit=2)
+    by_spoon = spoon(child)
+    parts = ["<h3>📅 План першого тижня</h3>",
+             chips(f"{esc(child['name'])}, {growth.age_text(birth_date(child))}",
+                   "з ложки" if by_spoon else "шматочками"),
+             "<p>Один новий продукт за раз, 2-3 дні поспіль. Новий даємо вранці, щоб до вечора "
+             "бачити реакцію. Порція мала, кілька ложечок, потім звичайне молоко чи суміш.</p>"]
+    day = 1
+    for code, _ in items:
+        prod = catalog.product(code)
+        last = day + PREP_FIRST_DAYS - 1
+        parts.append(f"<h4>Дні {day}-{last}: {prod['emoji']} {esc(prod['name'])}{catalog.mark_allergen(code)}</h4>"
+                     f"<p>{esc(catalog.serving(code, months, by_spoon))}</p>")
+        day = last + 1
+    if items:
+        parts.append(f"<h4>День {day}</h4><p>Без нового: даємо знайоме і дивимось, як дитина почувається. "
+                     "Далі продовжуємо за підказками «Що ввести далі».</p>")
+    else:
+        parts.append("<p>За віком усе, що бот знає, уже введено. Тримаємо різноманіття.</p>")
+    parts.append(PREP_SOURCE)
+    rows = [[B(f"🍽 Подали: {catalog.name(c)}", callback_data=f"f:quick:{c}", style="success"),
+             B("🥕 Картка", callback_data=f"f:p:{c}")] for c, _ in items]
+    rows.append([B("🌱 Готуємось", callback_data="f:prep"), B("🏠 Головна", callback_data="f:home")])
+    return Rich("".join(parts)), M(rows)
 
 
 # ─────────────────────── конструктор тарілки ───────────────────────
