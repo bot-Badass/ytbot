@@ -832,6 +832,42 @@ async def main() -> None:
     await press("f:rate:up", mom, ctx_mom)
     print("зворотний звʼязок: кнопка → автор → reply → людина; пошук-питання; 3-й день один раз")
 
+    # ── режим «Готуємось»: діти до 6 міс ──
+    from datetime import datetime, timedelta
+    today = datetime.now(ui.TZ).date()
+    kids = {}
+    for uid, nm, age_d in ((401, "Тримісячна", 91), (402, "Пʼятимісячна", 152),
+                           (403, "Завтрашня", 182), (404, "Шестимісячна", 183),
+                           (405, "Старша", 300)):
+        usr = User(uid, nm)
+        fid = db.create_family(uid, nm)
+        db.add_child(fid, nm, (today - timedelta(days=age_d)).isoformat(), "girls")
+        kids[nm] = (usr, Context(bot), db.child_of(uid))
+    assert growth.age_months(today - timedelta(days=183)) == 6 and \
+        growth.age_months(today - timedelta(days=182)) == 5, "month_date розходиться з age_months"
+    for nm, expect in (("Тримісячна", True), ("Пʼятимісячна", True), ("Завтрашня", True),
+                       ("Шестимісячна", False), ("Старша", False)):
+        usr, cx, ch = kids[nm]
+        home = ui.home(ch, db.intro_map(ch["id"]))
+        plain = rich.to_tg(str(home[0]))
+        assert ("Готуємось до прикорму" in plain) == expect, f"{nm}: блок «Готуємось» на головній: {not expect}"
+        assert any(b.callback_data == "f:prep" for r in home[1].inline_keyboard for b in r) == expect, nm
+        await press("f:home", usr, cx)
+        await press("f:prep", usr, cx)
+        await press("f:prep:week", usr, cx)
+        for scr in (ui.prep(ch)[0], ui.prep_week(ch, db.intro_map(ch["id"]))[0]):
+            assert "—" not in str(scr), f"{nm}: довге тире в тексті"
+    assert "Завтрашня" and "лишився 1 день" in rich.to_tg(str(ui.home(kids["Завтрашня"][2], {})[0]))
+    print("це головна 5-міс:", rich.to_tg(str(ui.home(kids["Пʼятимісячна"][2], {})[0]))[:400].replace("\n", " | "))
+    before = len(bot.sent)
+    await reminders.six_months(Context(bot))
+    got = [t for t in bot.sent[before:] if "сьогодні 6 місяців" in t]
+    assert len(got) == 1 and "Шестимісячна" in got[0], f"нагадування про 6 міс: {len(got)}"
+    await reminders.six_months(Context(bot))
+    await reminders.six_months(Context(bot))
+    assert len([t for t in bot.sent[before:] if "сьогодні 6 місяців" in t]) == 1, "нагадування повторилось"
+    print("«Готуємось»: головна 3/5/6 міс, розділ, план тижня; нагадування о 11:00 рівно одне")
+
     print(f"\nнайбільша клавіатура: {widest[1]} кнопок, {widest[2]} байт - {widest[0]}")
     print(f"екранів перевірено: {screens}, повідомлень надіслано: {len(bot.sent)}")
     if errors:

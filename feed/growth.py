@@ -4,7 +4,7 @@ from __future__ import annotations
 import functools
 import json
 import math
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from zoneinfo import ZoneInfo
 from pathlib import Path
 
@@ -23,6 +23,11 @@ def age_days(birth: date, when: date | None = None) -> int:
 
 def age_months(birth: date, when: date | None = None) -> int:
     return int(age_days(birth, when) // 30.4375)
+
+
+def month_date(birth: date, months: int) -> date:
+    """Перша доба, з якої age_months() уже дорівнює months (та сама мірка 30.4375)."""
+    return birth + timedelta(days=math.ceil(months * 30.4375))
 
 
 def age_text(birth: date, when: date | None = None) -> str:

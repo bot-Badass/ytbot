@@ -16,11 +16,13 @@ from telegram import InlineKeyboardMarkup as M
 from telegram.error import TelegramError
 from telegram.ext import Application, ContextTypes
 
-from . import catalog, db, rich, suggest, ui
+from . import catalog, db, growth, rich, suggest, ui
 
 log = logging.getLogger("feed.reminders")
 
 DIGEST_AT = time(20, 30, tzinfo=ui.TZ)
+SIX_AT = time(11, 0, tzinfo=ui.TZ)   # «Сьогодні 6 місяців» - одне повідомлення в день народження 6-го місяця
+SIX_KEY = "six_sent"                 # kv родини: six_sent:<child_id> = дата, коли надіслано
 STALE_DAYS = 7      # недоставлене нагадування не висить у базі вічно
 ACTIVE_DAYS = 3     # про порожній день пишемо лише тим, хто справді веде щоденник
 
@@ -105,6 +107,29 @@ async def _one(context: ContextTypes.DEFAULT_TYPE, child, now: int,
             db.close_nudge(nid)
 
 
+async def six_months(context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Рівно одне нагадування в добу, коли дитині виповнюється 6 місяців. Старшим нічого
+    не шлемо, бо збіг лише за датою. Мітка в kv не дає повторитись після рестарту."""
+    today = datetime.now(ui.TZ).date()
+    for child in db.q("SELECT * FROM child"):
+        try:
+            if growth.month_date(ui.birth_date(child), ui.PREP_UNTIL) != today:
+                continue
+            fid, key = child["family_id"], f"{SIX_KEY}:{child['id']}"
+            if db.get_kv(fid, key) or not _remind_on(fid):
+                continue
+            text = (f"<b>🌱 {ui.esc(child['name'])}: сьогодні {ui.PREP_UNTIL} місяців - можна починати</b>\n\n"
+                    "Якщо є ознаки готовності, найлегше стартувати з плану першого тижня.")
+            kb = M([[B("📅 План першого тижня", callback_data="f:prep:week")]])
+            delivered = False
+            for chat_id in db.family_chats(fid):
+                delivered |= await _send(context, chat_id, text, kb)
+            if delivered:
+                db.set_kv(fid, key, today.isoformat())
+        except Exception:  # одна крива родина не має гасити решту
+            log.exception("нагадування про 6 місяців для дитини %s не надіслано", child["id"])
+
+
 VITD_BTN = B("✅ Дали", callback_data="f:vdok")
 
 
@@ -145,6 +170,7 @@ def install(app: Application) -> None:
         log.warning("JobQueue недоступна - нагадувань не буде (постав APScheduler)")
         return
     jq.run_daily(evening_digest, time=DIGEST_AT, name="feed_evening")
+    jq.run_daily(six_months, time=SIX_AT, name="feed_six_months")
     for row in db.q("SELECT family_id FROM kv WHERE key='vitd_from'"):
         vitd_job(jq, row["family_id"])
     log.info("нагадування прикорму: один підсумок на родину о %s", DIGEST_AT.strftime("%H:%M"))
