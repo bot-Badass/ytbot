@@ -850,15 +850,23 @@ async def main() -> None:
         usr, cx, ch = kids[nm]
         home = ui.home(ch, db.intro_map(ch["id"]))
         plain = rich.to_tg(str(home[0]))
-        assert ("Готуємось до прикорму" in plain) == expect, f"{nm}: блок «Готуємось» на головній: {not expect}"
+        assert ("готуємось до прикорму" in plain) == expect, f"{nm}: головна «готуємось»: {not expect}"
+        assert ("Записати прийом" in str(home[1])) != expect, f"{nm}: кнопки звичайної головної"
+        assert ("Можна починати" in plain) == (nm == "Шестимісячна"), f"{nm}: блок «Можна починати»"
         assert any(b.callback_data == "f:prep" for r in home[1].inline_keyboard for b in r) == expect, nm
         await press("f:home", usr, cx)
         await press("f:prep", usr, cx)
         await press("f:prep:week", usr, cx)
         for scr in (ui.prep(ch)[0], ui.prep_week(ch, db.intro_map(ch["id"]))[0]):
             assert "—" not in str(scr), f"{nm}: довге тире в тексті"
-    assert "Завтрашня" and "лишився 1 день" in rich.to_tg(str(ui.home(kids["Завтрашня"][2], {})[0]))
-    print("це головна 5-міс:", rich.to_tg(str(ui.home(kids["Пʼятимісячна"][2], {})[0]))[:400].replace("\n", " | "))
+    assert "1 день" in rich.to_tg(str(ui.home(kids["Завтрашня"][2], {})[0]))
+    # онбординг до 6 міс: «Ще не почали» першою кнопкою; f:fnone веде на головну «готуємось»
+    usr, cx, ch = kids["Тримісячна"]
+    assert ui.first_tried(ch, [])[1].inline_keyboard[0][0].callback_data == "f:fnone"
+    await press("f:fnone", usr, cx)
+    await press("f:new", usr, cx)          # «Вже почали» - запис має відкритись
+    await press("f:guide:prep", usr, cx)
+    print("це головна 5-міс:", rich.to_tg(str(ui.home(kids["Пʼятимісячна"][2], {})[0]))[:600].replace("\n", " | "))
     before = len(bot.sent)
     await reminders.six_months(Context(bot))
     got = [t for t in bot.sent[before:] if "сьогодні 6 місяців" in t]
@@ -866,7 +874,24 @@ async def main() -> None:
     await reminders.six_months(Context(bot))
     await reminders.six_months(Context(bot))
     assert len([t for t in bot.sent[before:] if "сьогодні 6 місяців" in t]) == 1, "нагадування повторилось"
-    print("«Готуємось»: головна 3/5/6 міс, розділ, план тижня; нагадування о 11:00 рівно одне")
+    # до 6 міс без продуктів «Що ввести далі» і «План на завтра» ведуть у «Готуємось»
+    usr, cx, ch = kids["Пʼятимісячна"]
+    for act in ("f:next", "f:plan"):
+        await press(act, usr, cx)
+        assert "Готуємось до прикорму" in bot.sent[-1], f"{act} до 6 міс: {bot.sent[-1][:80]}"
+    # почали в 5 міс (за порадою лікаря): блоку немає, підказки як шестимісячному
+    db.mark_tried(ch["id"], ["brokoli"])
+    assert "готуємось до прикорму" not in rich.to_tg(str(ui.home(ch, db.intro_map(ch["id"]))[0]))
+    await press("f:next", usr, cx)
+    assert "Готуємось до прикорму" not in bot.sent[-1] and "введено все" not in bot.sent[-1], bot.sent[-1][:120]
+    # догін: бот лежав об 11:00 у сам день - прийде за 1-2 доби, «вже 6 місяців»; на 3-тю ні
+    for uid, nm, age_d in ((406, "Вчорашня", 184), (407, "Позавчорашня", 185), (408, "Запізна", 186)):
+        db.add_child(db.create_family(uid, nm), nm, (today - timedelta(days=age_d)).isoformat(), "girls")
+    before = len(bot.sent)
+    await reminders.six_months(Context(bot))
+    late = [t for t in bot.sent[before:] if "6 місяців - можна" in t]
+    assert len(late) == 2 and all("вже 6" in t for t in late) and not any("Запізна" in t for t in late), late
+    print("«Готуємось»: головна 3/5/6 міс, розділ, план тижня; нагадування рівно одне, догін 2 доби")
 
     print(f"\nнайбільша клавіатура: {widest[1]} кнопок, {widest[2]} байт - {widest[0]}")
     print(f"екранів перевірено: {screens}, повідомлень надіслано: {len(bot.sent)}")

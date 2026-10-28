@@ -35,7 +35,7 @@ def age_text(birth: date, when: date | None = None) -> str:
     if days < 0:
         return "ще не народилась"
     months = int(days // 30.4375)
-    rest = days - int(months * 30.4375)
+    rest = int(days - months * 30.4375)
     if months == 0:
         return f"{days} дн."
     return f"{months} міс {rest} дн." if rest else f"{months} міс"

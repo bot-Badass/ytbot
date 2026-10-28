@@ -632,7 +632,7 @@ async def _on_button(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
         await _show(update, ui.first_saved(child, picked))
         intro = db.intro_map(cid)
         stock = db.pantry_codes(fid)
-        items = suggest.next_products(ui.months_of(child), intro, stock)
+        items = suggest.next_products(ui.feed_months(child), intro, stock)
         context.user_data["next"] = [c for c, _ in items]
         return await _send(update, *ui.next_up(child, intro, items, [], stock))
 
@@ -805,17 +805,21 @@ async def _on_button(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
             return await _show(update, *ui.settings(child, fid, remind, show_rare))
         return await _show(update, *ui.library(child, intro, show_rare))
 
+    if action in ("next", "nxo", "plan") and ui.months_of(child) < ui.PREP_UNTIL and not intro:
+        # до 6 міс каталог порожній («усе введено») - ведемо в «Готуємось»
+        return await _show(update, *ui.prep(child))
+
     if action in ("next", "nxo"):
         stock = db.pantry_codes(fid)
         hold = suggest.holding(intro, db.now())
         # «Інші варіанти»: показане відкладаємо, поки не скінчиться все, тоді по колу
         skip = context.user_data.get("nxskip", []) + context.user_data.get("next", []) \
             if action == "nxo" else []
-        items = [] if hold else suggest.next_products(ui.months_of(child), intro, stock,
+        items = [] if hold else suggest.next_products(ui.feed_months(child), intro, stock,
                                                       exclude=set(skip))
         if not items and skip and not hold:
             skip = []
-            items = suggest.next_products(ui.months_of(child), intro, stock)
+            items = suggest.next_products(ui.feed_months(child), intro, stock)
         context.user_data["nxskip"] = skip
         context.user_data["next"] = [c for c, _ in items]
         return await _show(update, *ui.next_up(child, intro, items, hold, stock))
@@ -826,11 +830,11 @@ async def _on_button(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
         skip = context.user_data.get("planskip", []) if sub == "o" else []
         if sub == "o" and last:
             skip = skip + [last]
-        plan = suggest.day_plan(ui.months_of(child), intro, db.now(), exclude=set(skip),
+        plan = suggest.day_plan(ui.feed_months(child), intro, db.now(), exclude=set(skip),
                                 keep=last if sub == "m" else None)
         if sub == "o" and not plan["new"] and skip:     # перебрали все - по колу
             skip = []
-            plan = suggest.day_plan(ui.months_of(child), intro, db.now())
+            plan = suggest.day_plan(ui.feed_months(child), intro, db.now())
         context.user_data["planskip"] = skip
         context.user_data["plan_new"] = plan["new"]
         return await _show(update, *ui.plan_tomorrow(child, plan))

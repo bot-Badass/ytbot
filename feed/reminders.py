@@ -22,6 +22,7 @@ log = logging.getLogger("feed.reminders")
 
 DIGEST_AT = time(20, 30, tzinfo=ui.TZ)
 SIX_AT = time(11, 0, tzinfo=ui.TZ)   # «Сьогодні 6 місяців» - одне повідомлення в день народження 6-го місяця
+SIX_CATCHUP = 2                      # діб: догнати, якщо бот лежав об 11:00 у сам день
 SIX_KEY = "six_sent"                 # kv родини: six_sent:<child_id> = дата, коли надіслано
 STALE_DAYS = 7      # недоставлене нагадування не висить у базі вічно
 ACTIVE_DAYS = 3     # про порожній день пишемо лише тим, хто справді веде щоденник
@@ -113,12 +114,13 @@ async def six_months(context: ContextTypes.DEFAULT_TYPE) -> None:
     today = datetime.now(ui.TZ).date()
     for child in db.q("SELECT * FROM child"):
         try:
-            if growth.month_date(ui.birth_date(child), ui.PREP_UNTIL) != today:
+            late = (today - growth.month_date(ui.birth_date(child), ui.PREP_UNTIL)).days
+            if not 0 <= late <= SIX_CATCHUP:
                 continue
             fid, key = child["family_id"], f"{SIX_KEY}:{child['id']}"
             if db.get_kv(fid, key) or not _remind_on(fid) or db.intro_map(child["id"]):
                 continue
-            text = (f"<b>🌱 {ui.esc(child['name'])}: сьогодні {ui.PREP_UNTIL} місяців - можна починати</b>\n\n"
+            text = (f"<b>🌱 {ui.esc(child['name'])}: {"сьогодні" if not late else "вже"} {ui.PREP_UNTIL} місяців - можна починати</b>\n\n"
                     "Якщо є ознаки готовності, найлегше стартувати з плану першого тижня.")
             kb = M([[B("📅 План першого тижня", callback_data="f:prep:week")]])
             delivered = False
