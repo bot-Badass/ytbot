@@ -1,6 +1,7 @@
 """Хендлери прикорму. Весь стан кнопок у callback_data з префіксом f:."""
 from __future__ import annotations
 
+import html
 import logging
 import os
 import re
@@ -19,6 +20,8 @@ MAX_PLATE = 12                        # 6 не вистачало: каша+фр
 
 DATE_RE = re.compile(r"^\s*(\d{1,2})[.\-/](\d{1,2})[.\-/](\d{4})\s*$")
 ISO_RE = re.compile(r"^\s*(\d{4})-(\d{1,2})-(\d{1,2})\s*$")
+# код запрошення серед тексту: 6 hex-символів, хоч одна цифра (token_hex(3).upper())
+INVITE_RE = re.compile(r"(?<![0-9A-Za-z])([0-9A-Fa-f]{6})(?![0-9A-Za-z])")
 NUM_RE = re.compile(r"^\s*(\d{1,3}(?:[.,]\d{1,2})?)\s*$")
 
 
@@ -302,20 +305,8 @@ async def on_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         raise ApplicationHandlerStop
 
     if kind == "join":
-        family_id = db.use_invite(text, user.id, _who(update))
         context.user_data.pop("await", None)
-        if not family_id:
-            await update.message.reply_text(
-                "Код не підійшов. Він одноразовий і діє добу - попроси новий.")
-            raise ApplicationHandlerStop
-        child = db.child_of(user.id)
-        if not child:
-            context.user_data["await"] = {"k": "child_name"}
-            await update.message.reply_text("Приєднав. Як звати дитину?")
-            raise ApplicationHandlerStop
-        t, kb = ui.home(child, db.intro_map(child["id"]))
-        await update.message.reply_text(f"Готово, ти в родині. Профіль: {child['name']}.")
-        await _send(update, t, kb)
+        await _join(update, context, text)
         raise ApplicationHandlerStop
 
     child = db.child_of(user.id)
@@ -557,6 +548,10 @@ async def _on_button(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
         else:
             context.user_data["await"] = {"k": "fb", "rating": "down"}
             await _show(update, "Що саме не так? Напишіть кількома словами, я виправлю.")
+        return
+    if action == "joincode":
+        await query.answer()
+        await _join(update, context, parts[2] if len(parts) > 2 else "")
         return
     if action == "joinask":
         await query.answer()
@@ -1054,9 +1049,60 @@ async def _on_button(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
     return await _show(update, *ui.home(child, intro))
 
 
+BAD_CODE = "Код не підійшов. Він одноразовий і діє добу - попроси новий."
+
+
+async def _join(update: Update, context: ContextTypes.DEFAULT_TYPE, code: str) -> None:
+    """Вступ у родину за кодом - з екрана «Надішли код» або з кнопки підтвердження."""
+    user = update.effective_user
+    if not db.use_invite(code, user.id, _who(update)):
+        await _show(update, BAD_CODE)
+        return
+    child = db.child_of(user.id)
+    if not child:
+        context.user_data["await"] = {"k": "child_name"}
+        await _show(update, "Приєднав. Як звати дитину?")
+        return
+    await _show(update, f"Готово, ти в родині. Профіль: {html.escape(child['name'])}.")
+    await _send(update, *ui.home(child, db.intro_map(child["id"])))
+
+
+async def _invite_in_text(update: Update, query: str) -> bool:
+    """Код, надісланий просто в чат (21.10 його тричі ковтнув пошук).
+    Вступ лише після кнопки: учасник іншої родини з неї вийде."""
+    m = INVITE_RE.search(query)
+    if not m or not re.search(r"\d", m[1]):
+        return False
+    code = m[1].upper()
+    family_id = db.invite_family(code)
+    if not family_id:
+        if "код" not in query.lower():
+            return False
+        await update.message.reply_text(BAD_CODE)
+        return True
+    target = db.q1("SELECT name FROM child WHERE family_id=? ORDER BY id LIMIT 1", (family_id,))
+    mine = db.child_of(update.effective_user.id)
+    member = db.member(update.effective_user.id)
+    if member and member["family_id"] == family_id:
+        await update.message.reply_text("Ти вже в цій родині.")
+        return True
+    text = "🔗 Це код запрошення в родину"
+    if target:
+        text += f", де дитина {target['name']}"
+    text += ". Приєднатися?"
+    if mine:
+        text += f"\n\nТвій теперішній профіль ({mine['name']}) лишиться без тебе."
+    await update.message.reply_text(text, reply_markup=M([
+        [B("✅ Приєднатися", callback_data=f"f:joincode:{code}")],
+        [B("🏠 Головна", callback_data="f:home")]]))
+    return True
+
+
 async def on_free_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Будь-який інший текст: показуємо головну, а не мовчимо."""
     track(update)
+    if await _invite_in_text(update, update.message.text or ""):
+        return
     if not db.member(update.effective_user.id) and not may_create(update):
         return
     got = await ensure(update, context)

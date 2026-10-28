@@ -572,6 +572,22 @@ async def main() -> None:
     await say(code, wife, ctx_wife)
     assert db.child_of(wife.id)["id"] == child["id"], "дружина не бачить ту саму дитину"
 
+    # код просто в чат від того, хто вже завів свій профіль (21.10 пошук ковтнув код)
+    nana, ctx_nana = User(303, "Nana"), Context(bot)
+    db.add_child(db.create_family(nana.id, "Nana"), "Дубль", child["birth_date"], "girls")
+    await press("f:inv")
+    code = db.q1("SELECT code FROM invite WHERE used_by IS NULL")["code"]
+    await handlers.on_free_text(Update(bot, nana, text="код 000AAA0"), ctx_nana)
+    await handlers.on_free_text(Update(bot, nana, text="У мене є код запрошення 0AB12C"), ctx_nana)
+    assert db.child_of(nana.id)["name"] == "Дубль", "невалідний код щось змінив"
+    await handlers.on_free_text(Update(bot, nana, text=f"У мене є код запрошення {code.lower()}"), ctx_nana)
+    assert db.child_of(nana.id)["name"] == "Дубль", "вступ без підтвердження"
+    await press(f"f:joincode:{code}", nana, ctx_nana)
+    assert db.child_of(nana.id)["id"] == child["id"], "код з тексту не приєднав"
+    await handlers.on_free_text(Update(bot, nana, text=code), ctx_nana)
+    db.run("DELETE FROM member WHERE user_id=?", (nana.id,))  # далі тести рахують двох дорослих
+    print("код запрошення текстом: питає, вступає лише після кнопки")
+
     # ── вітамін D: одне нагадування у вибраний час, своя задача на родину ──
     fam = db.member(max_u.id)["family_id"]
     jobs = lambda: Context.jq.get_jobs_by_name(f"feed_vitd:{fam}")

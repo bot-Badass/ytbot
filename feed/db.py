@@ -216,6 +216,13 @@ def new_invite(family_id: int) -> str:
 INVITE_TTL = 24 * 3600
 
 
+def invite_family(code: str) -> int | None:
+    """Чи живий код - без використання (щоб спершу спитати людину)."""
+    row = q1("SELECT family_id FROM invite WHERE code=? AND used_by IS NULL AND created_at>=?",
+             (code.strip().upper(), now() - INVITE_TTL))
+    return row["family_id"] if row else None
+
+
 def use_invite(code: str, user_id: int, name: str) -> int | None:
     """Код одноразовий і живе добу: бот публічний, а код це ключ до щоденника дитини."""
     row = q1("SELECT * FROM invite WHERE code=? AND used_by IS NULL AND created_at>=?",
