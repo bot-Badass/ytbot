@@ -159,7 +159,8 @@ def home(child, intro: dict) -> tuple[str, M]:
         parts.append("<blockquote>👀 <b>Під наглядом:</b> "
                      + ", ".join(catalog.label(c) for c in watch[:4]) + "</blockquote>")
 
-    prep_left = days_to_start(child) if months < PREP_UNTIL else 0
+    # хто вже почав раніше 6 міс (4-5 за порадою лікаря), тому «готуємось» лише заважає
+    prep_left = days_to_start(child) if months < PREP_UNTIL and not intro else 0
     if prep_left > 0:
         parts.append("<blockquote><b>🌱 Готуємось до прикорму</b><br>"
                      f"До {PREP_UNTIL} місяців {_days_left(prep_left)}. Ознаки готовності, що підготувати "

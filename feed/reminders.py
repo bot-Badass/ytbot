@@ -116,7 +116,7 @@ async def six_months(context: ContextTypes.DEFAULT_TYPE) -> None:
             if growth.month_date(ui.birth_date(child), ui.PREP_UNTIL) != today:
                 continue
             fid, key = child["family_id"], f"{SIX_KEY}:{child['id']}"
-            if db.get_kv(fid, key) or not _remind_on(fid):
+            if db.get_kv(fid, key) or not _remind_on(fid) or db.intro_map(child["id"]):
                 continue
             text = (f"<b>🌱 {ui.esc(child['name'])}: сьогодні {ui.PREP_UNTIL} місяців - можна починати</b>\n\n"
                     "Якщо є ознаки готовності, найлегше стартувати з плану першого тижня.")
