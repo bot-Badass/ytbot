@@ -216,7 +216,8 @@ async def monthly(context) -> None:
                 continue
             try:
                 await context.bot.send_photo(chat_id, png, caption=f"📅 Підсумок місяця: "
-                                             f"{MONTH_NOM[mon - 1].lower()} {html.escape(child['name'])}")
+                                             f"{MONTH_NOM[mon - 1].lower()} {html.escape(child['name'])}",
+                                             reply_markup=ui.M([[ui.share_button(chat_id)]]))
                 sent += 1
             except TelegramError as exc:
                 log.warning("картка місяця не дійшла %s: %s", chat_id, exc)

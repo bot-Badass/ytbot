@@ -489,7 +489,7 @@ async def on_button(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             return
         # велика віха - картинкою (одна, найстарша за рівнем), решта - текстом
         big = [g for g in got if g in cards.BIG]
-        text, kb = ui.new_achievement(child, got)
+        text, kb = ui.new_achievement(child, got, user.id)
         if big:
             try:
                 png = await cards.render(cards.for_achievement(child, *big[-1]))
@@ -802,7 +802,7 @@ async def _on_button(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
                                                        intro, show_rare))
         if where == "set":
             remind = db.get_kv(fid, "remind", "1") == "1"
-            return await _show(update, *ui.settings(child, fid, remind, show_rare))
+            return await _show(update, *ui.settings(child, fid, remind, show_rare, user.id))
         return await _show(update, *ui.library(child, intro, show_rare))
 
     if action in ("next", "nxo", "plan") and ui.months_of(child) < ui.PREP_UNTIL and not intro:
@@ -977,12 +977,12 @@ async def _on_button(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
 
     if action == "set":
         remind = db.get_kv(fid, "remind", "1") == "1"
-        return await _show(update, *ui.settings(child, fid, remind, show_rare))
+        return await _show(update, *ui.settings(child, fid, remind, show_rare, user.id))
 
     if action == "style":
         db.set_kv(fid, "style", "blw" if ui.spoon(child) else "spoon")
         remind = db.get_kv(fid, "remind", "1") == "1"
-        return await _show(update, *ui.settings(child, fid, remind, show_rare))
+        return await _show(update, *ui.settings(child, fid, remind, show_rare, user.id))
 
     if action == "vd":
         sub = parts[2] if len(parts) > 2 else ""
@@ -1014,7 +1014,7 @@ async def _on_button(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
     if action == "rem":
         cur = db.get_kv(fid, "remind", "1") == "1"
         db.set_kv(fid, "remind", "0" if cur else "1")
-        return await _show(update, *ui.settings(child, fid, not cur, show_rare))
+        return await _show(update, *ui.settings(child, fid, not cur, show_rare, user.id))
 
     if action == "inv":
         code = db.new_invite(member["family_id"])

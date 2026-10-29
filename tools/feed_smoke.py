@@ -694,6 +694,23 @@ async def main() -> None:
     now = _dt.now(ui.TZ)
     assert cards.month(alisa, now.year, now.month) is None or "Підсумок" in cards.month(alisa, now.year, now.month)
     print(f"картки: {len(cards.BIG)} шаблонів віх, фото з підписом, підсумок місяця")
+
+    # ── порадити бота: особисте посилання ref_<id> ──
+    friend = User(404, "Friend")
+    await handlers.cmd_start(Update(bot, friend, text="/start ref_101"), Context(bot, ["ref_101"]))
+    assert db.q1("SELECT source FROM subscriber WHERE user_id=404")["source"] == "ref_101"
+    wife_src = db.q1("SELECT source FROM subscriber WHERE user_id=?", (wife.id,))
+    await handlers.cmd_start(Update(bot, wife, text="/start ref_101"), Context(bot, ["ref_101"]))
+    assert (db.q1("SELECT source FROM subscriber WHERE user_id=?", (wife.id,)) or {"source": ""})["source"] \
+        == (wife_src["source"] if wife_src else ""), "реферал переписав джерело старому підписнику"
+    assert db.ref_count(max_u.id) == 1
+    t, kb = ui.settings(alisa, db.member(max_u.id)["family_id"], True, False, max_u.id)
+    urls = [b.url for r in kb.inline_keyboard for b in r if b.url]
+    assert urls and "start%3Dref_101" in urls[0] and "прийшли: 1" in t, (urls, t[-300:])
+    _, kb = ui.new_achievement(alisa, [("taste", 25)], max_u.id)
+    assert any(b.url for r in kb.inline_keyboard for b in r), "на досягненні немає кнопки «Порадити»"
+    await press("f:set")
+    print("порадити бота: ref-посилання, без перезапису старим, кнопка в налаштуваннях і на досягненні")
     await press("f:new", wife, ctx_wife)
     await press("f:sel:banan", wife, ctx_wife)
     await press("f:save:breakfast", wife, ctx_wife)

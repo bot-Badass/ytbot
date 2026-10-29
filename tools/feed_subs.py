@@ -39,11 +39,20 @@ def cmd_stats() -> None:
     print(f"завели профіль:   {s['with_profile']} у {s['families']} родинах, дітей {s['children']}")
     print(f"заходили за добу: {s['day']}, за тиждень: {s['week']}")
     print(f"записів про їжу:  {s['meals']}")
-    rows = db.q("SELECT source, COUNT(*) c FROM subscriber GROUP BY source ORDER BY c DESC")
-    if any(r["source"] for r in rows):
+    # особисті посилання ref_<id> зводимо в один рядок, інакше кожен реферер окремим джерелом
+    rows = db.q("SELECT CASE WHEN source LIKE 'ref\\_%' ESCAPE '\\' THEN 'ref (порадили)' ELSE source END s, "
+                "COUNT(*) c FROM subscriber GROUP BY s ORDER BY c DESC")
+    if any(r["s"] for r in rows):
         print("\nджерела (deep-link):")
         for r in rows:
-            print(f"  {r['source'] or '(прямий вхід)':<20} {r['c']}")
+            print(f"  {r['s'] or '(прямий вхід)':<20} {r['c']}")
+    refs = db.q("SELECT r.source, COUNT(*) c, s.name FROM subscriber r "
+                "LEFT JOIN subscriber s ON 'ref_' || s.user_id = r.source "
+                "WHERE r.source LIKE 'ref\\_%' ESCAPE '\\' GROUP BY r.source ORDER BY c DESC LIMIT 10")
+    if refs:
+        print("\nхто порадив найбільше:")
+        for r in refs:
+            print(f"  {(r['name'] or r['source'])[:24]:<24} {r['c']}")
     print("\nостанні 10:")
     for r in db.q("SELECT * FROM subscriber ORDER BY first_seen DESC LIMIT 10"):
         tag = " ⛔" if r["blocked"] else ""

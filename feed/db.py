@@ -480,6 +480,8 @@ def touch_subscriber(user, source: str = "") -> bool:
             + " " + (getattr(user, "last_name", "") or "")).strip()[:80]
     lang = (getattr(user, "language_code", "") or "")[:8]
     row = q1("SELECT user_id FROM subscriber WHERE user_id=?", (uid,))
+    if row and source.startswith("ref_"):
+        source = ""          # реферал рахуємо лише новим людям, а не тим, хто вже був у боті
     if row:
         run("UPDATE subscriber SET username=?, name=?, lang=?, last_seen=?, hits=hits+1, "
             "blocked=0, source=CASE WHEN source='' THEN ? ELSE source END WHERE user_id=?",
@@ -488,6 +490,12 @@ def touch_subscriber(user, source: str = "") -> bool:
     run("INSERT INTO subscriber(user_id, username, name, lang, source, first_seen, last_seen) "
         "VALUES(?,?,?,?,?,?,?)", (uid, username, name, lang, source[:64], now(), now()))
     return True
+
+
+def ref_count(user_id: int) -> int:
+    """Скільки людей прийшли за особистим посиланням ref_<id>."""
+    row = q1("SELECT COUNT(*) c FROM subscriber WHERE source=?", (f"ref_{int(user_id)}",))
+    return row["c"] if row else 0
 
 
 def subscribers(active_only: bool = True) -> list[sqlite3.Row]:

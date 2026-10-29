@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import re
 from datetime import date, datetime, timedelta
+from urllib.parse import quote
 from zoneinfo import ZoneInfo
 
 from telegram import InlineKeyboardButton as B
@@ -999,7 +1000,7 @@ def album(child) -> tuple[str, M]:
     return Rich("".join(parts)), M(rows)
 
 
-def new_achievement(child, got: list[tuple[str, int]]) -> tuple[str, M]:
+def new_achievement(child, got: list[tuple[str, int]], user_id: int = 0) -> tuple[str, M]:
     """Повідомлення про нове. Кілька за раз - одним повідомленням."""
     lines = []
     for key, lvl in got:
@@ -1007,7 +1008,8 @@ def new_achievement(child, got: list[tuple[str, int]]) -> tuple[str, M]:
         lines.append(f"{emoji} <b>{esc(title)}</b>: {esc(achievements.level_text(key, lvl))}")
     head = "🏅 <b>Нове досягнення!</b>" if len(got) == 1 else "🏅 <b>Нові досягнення!</b>"
     return (f"{head}\n\n" + "\n".join(lines) + f"\n\n{esc(child['name'])} молодець.",
-            M([[B("🏅 Усі досягнення", callback_data="f:ach")]]))
+            M([[B("🏅 Усі досягнення", callback_data="f:ach")],
+               *([[share_button(user_id)]] if user_id else [])]))
 
 
 def plan_tomorrow(child, plan: dict) -> tuple[str, M]:
@@ -1155,7 +1157,25 @@ def growth_screen(child) -> tuple[str, M]:
 # ─────────────────────────── налаштування ───────────────────────────
 
 
-def settings(child, family_id: int, remind: bool, show_rare: bool = False) -> tuple[str, M]:
+BOT_USERNAME = "MalenkyiVsesvitBot"
+SHARE_TEXT = ("Щоденник прикорму в Telegram: що дитина вже спробувала, як подати продукт "
+              "у її віці, алергени і план на завтра. Безкоштовно.")
+
+
+def ref_link(user_id: int) -> str:
+    """Особисте посилання: хто прийде за ним, отримає source=ref_<id>."""
+    return f"https://t.me/{BOT_USERNAME}?start=ref_{user_id}"
+
+
+def share_button(user_id: int) -> B:
+    """Кнопка відкриває вікно «Поділитися» Telegram з готовим текстом і посиланням."""
+    url = (f"https://t.me/share/url?url={quote(ref_link(user_id), safe='')}"
+           f"&text={quote(SHARE_TEXT, safe='')}")
+    return B("💌 Порадити бота", url=url)
+
+
+def settings(child, family_id: int, remind: bool, show_rare: bool = False,
+             user_id: int = 0) -> tuple[str, M]:
     members = db.family_members(family_id)
     lines = [f"⚙️ <b>Налаштування</b>", "",
              f"Дитина: <b>{esc(child['name'])}</b>, {esc(child['birth_date'])}, "
@@ -1168,6 +1188,9 @@ def settings(child, family_id: int, remind: bool, show_rare: bool = False) -> tu
              "",
              "<i>Бібліотека продуктів - довідка на основі рекомендацій ВООЗ, AAP і EFSA. "
              "Вона не замінює педіатра.</i>"]
+    invited = db.ref_count(user_id) if user_id else 0
+    if invited:
+        lines[-2:-2] = [f"За вашим посиланням прийшли: {invited}"]
     rows = [[B("➕ Додати дорослого", callback_data="f:inv")],
             [B(("🔕 Вимкнути" if remind else "🔔 Увімкнути") + " нагадування", callback_data="f:rem")],
             [B("☀️ Вітамін D", callback_data="f:vd"),
@@ -1176,6 +1199,7 @@ def settings(child, family_id: int, remind: bool, show_rare: bool = False) -> tu
                callback_data="f:rare:set")],
             [B("✏️ Змінити дату народження", callback_data="f:editbirth")],
             [B("💬 Зворотний звʼязок", callback_data="f:fb")],
+            *([[share_button(user_id)]] if user_id else []),
             [B("ℹ️ Інструкція", callback_data="f:guide"),
              B("🔒 Дані і приватність", callback_data="f:privacy")],
             [B("🏠 Головна", callback_data="f:home")]]
