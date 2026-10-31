@@ -23,7 +23,7 @@ from feed import db  # noqa: E402
 
 db.DB_PATH = Path(tempfile.mkdtemp()) / "smoke.sqlite3"
 
-from feed import catalog, feedback, growth, handlers, reminders, rich, suggest, ui  # noqa: E402
+from feed import catalog, feedback, growth, handlers, reminders, rich, search, suggest, ui  # noqa: E402
 from telegram import InlineKeyboardMarkup as M  # noqa: E402
 from telegram.ext import ApplicationHandlerStop  # noqa: E402
 
@@ -836,8 +836,20 @@ async def main() -> None:
     assert ctx_mom.user_data.get("fb_draft"), "питання без результатів не запропоновано автору"
     await press("f:fbsend", mom, ctx_mom)
     assert db.q1("SELECT 1 FROM feedback WHERE user_id=? AND kind='search'", (mom.id,))
+    # пошуки-питання 28-31.10 ведуть на кнопку, а не в «не знайшов»
+    for q, cb in [("Як подивитися що ми вже їли", "f:diary"), ("Що дати завтра ?", "f:plan"),
+                  ("Злаки", "f:lg:grain")]:
+        tip = search.hint(q)
+        assert tip and tip[2][0][1] == cb, f"«{q}» без підказки {cb}: {tip}"
+        await handlers.on_free_text(Update(bot, mom, text=q), ctx_mom)
+        await press(cb, mom, ctx_mom)
     # питання на 3-й день: один раз, 👎 веде в текст
     db.run("UPDATE family SET created_at=created_at-4*86400")
+    # родина стара, але перший продукт записано сьогодні - «ведете кілька днів» не питаємо
+    await feedback.ask_once(Context(bot))
+    assert not db.q1("SELECT 1 FROM feedback WHERE user_id=? AND kind='ask'", (mom.id,)), \
+        "питання пішло в день першого запису"
+    db.run("UPDATE intro SET first_ts=first_ts-4*86400")
     await feedback.ask_once(Context(bot))
     await feedback.ask_once(Context(bot))
     asks = db.q1("SELECT COUNT(*) n FROM feedback WHERE user_id=? AND kind='ask'", (mom.id,))["n"]

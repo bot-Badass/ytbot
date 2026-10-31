@@ -128,10 +128,13 @@ async def ask_once(context: ContextTypes.DEFAULT_TYPE) -> None:
         "WHERE f.created_at<=? AND s.last_seen>=? AND s.blocked=0 "
         # питаємо лише тих, хто справді щось відмітив: текст «ведете щоденник» іншим бреше
         # (21.10 питання пішло 492 людям, ~80% з них не мали жодного запису)
+        # і перший запис продукту теж має бути ≥ASK_AFTER_DAYS тому: 31.10 питання «ведете вже
+        # кілька днів» пішло мамі, яка записала перший продукт за 15 хвилин до того
         "AND EXISTS (SELECT 1 FROM child c JOIN intro i ON i.child_id=c.id "
-        "            WHERE c.family_id=m.family_id) "
+        "            WHERE c.family_id=m.family_id AND i.first_ts<=?) "
         "AND m.user_id NOT IN (SELECT user_id FROM feedback WHERE kind='ask')",
-        (now - ASK_AFTER_DAYS * 86400, now - ASK_ACTIVE_DAYS * 86400))
+        (now - ASK_AFTER_DAYS * 86400, now - ASK_ACTIVE_DAYS * 86400,
+         now - ASK_AFTER_DAYS * 86400))
     # своя родина автора (Max і D.) не питається: це не користувачі, а ті, хто робить бот
     own = {r["user_id"] for o in owners() for r in db.q(
         "SELECT user_id FROM member WHERE family_id=(SELECT family_id FROM member WHERE user_id=?)",
