@@ -693,7 +693,26 @@ async def main() -> None:
     from datetime import datetime as _dt
     now = _dt.now(ui.TZ)
     assert cards.month(alisa, now.year, now.month) is None or "Підсумок" in cards.month(alisa, now.year, now.month)
-    print(f"картки: {len(cards.BIG)} шаблонів віх, фото з підписом, підсумок місяця")
+    # підсумок місяця під сторіз: заклик замість підпису, кнопка шле фото з ref-посиланням
+    st = cards.month(alisa, now.year, now.month, story=True)
+    if st:
+        assert "Ведемо щоденник" in st and "story" in st and 'class="foot"' not in st
+    intro_a = db.intro_map(alisa["id"])
+    codes = [c for c in intro_a if catalog.product(c)][:20]
+    for args in ((14, codes, codes[:2], {"code": codes[0], "n": 21}), (11, [], [], None)):
+        html_s = cards._story(alisa, now.year, now.month, args[0], args[1], args[2], args[3], intro_a)
+        assert "MalenkyiVsesvitBot" in html_s and "</section>" in html_s
+        assert ("нових смаків" in html_s or "нові смаки" in html_s or "новий смак" in html_s) if args[1] else "прийом" in html_s
+    assert len(cards.story_button(alisa["id"], now.year, now.month).callback_data.encode()) <= 64
+    cards.render = fake_render
+    n_ph = len(bot.photos)
+    await press(f"f:mst:{alisa['id']}:{now.year}{now.month:02d}")
+    if st:
+        assert len(bot.photos) == n_ph + 1 and "ref_" in bot.photos[-1][1], "сторіз без фото/посилання"
+    await press(f"f:mst:999999:{now.year}{now.month:02d}")   # чужа дитина - тиша
+    await press("f:mst:abc")                                  # битий callback не падає
+    cards.render = real_render
+    print(f"картки: {len(cards.BIG)} шаблонів віх, фото з підписом, підсумок місяця, сторіз (шаблон з даними і без нових)")
 
     # ── порадити бота: особисте посилання ref_<id> ──
     friend = User(404, "Friend")

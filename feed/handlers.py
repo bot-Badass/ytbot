@@ -602,6 +602,20 @@ async def _on_button(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
     if action not in ("sel", "frt"):  # ці відповідають самі: алерт/тост = єдина відповідь
         await query.answer()
 
+    if action == "mst":
+        # картка місяця під сторіз: рендер на тап, лише для дитини своєї родини
+        ym = parts[3] if len(parts) > 3 else ""
+        if not (parts[2].isdigit() and ym.isdigit() and len(ym) == 6 and 1 <= int(ym[4:]) <= 12):
+            return
+        kid = db.q1("SELECT * FROM child WHERE id=? AND family_id=?", (int(parts[2]), fid))
+        page = cards.month(kid, int(ym[:4]), int(ym[4:]), story=True) if kid else None
+        if not page:
+            return
+        png = await cards.render(page, height=1920)
+        await context.bot.send_photo(user.id, png, parse_mode=ParseMode.HTML,
+                                     caption=cards.STORY_CAPTION + html.escape(ui.ref_link(user.id)))
+        return
+
     if action == "home":
         context.user_data["draft"] = []
         context.user_data.pop("await", None)
