@@ -214,6 +214,14 @@ def plates_for(band: str) -> list[dict]:
     return [p for p in plates() if p["age"] == band]
 
 
+RECIPE_STYLE = {"spoon": "🥄 з ложки", "blw": "✋ шматочками", "both": "🥄✋ з ложки або шматочками"}
+
+
+def recipe_fits_style(r: dict, style: str | None) -> bool:
+    """style родини: spoon / blw; None - не вибирали, підходить усе."""
+    return not style or r.get("style", "both") in (style, "both")
+
+
 def recipes_for(months: int) -> list[dict]:
     return [r for r in recipes() if r["age_from"] <= max(months, 6)]
 

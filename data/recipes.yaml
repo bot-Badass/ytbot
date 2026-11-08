@@ -1,5 +1,6 @@
 # Рецепти для прикорму. Без солі і цукру до року.
 # age_from - з якого місяця страва доречна у цій подачі.
+# style - подача: spoon (з ложки: пюре, каші, супи), blw (шматочками в руку), both (і так, і так).
 
 recipes:
 
@@ -7,6 +8,7 @@ recipes:
   title: "Пюре з броколі та картоплі"
   emoji: 🥦
   age_from: 6
+  style: spoon
   time: "20 хв"
   products: [brokoli, kartoplia, oliia]
   ingredients:
@@ -26,6 +28,7 @@ recipes:
   title: "Гречана каша з індичкою"
   emoji: 🥣
   age_from: 6
+  style: spoon
   time: "35 хв"
   products: [grechka, indychka, morkva, oliia]
   ingredients:
@@ -46,6 +49,7 @@ recipes:
   title: "Батат смужками з духовки"
   emoji: 🍠
   age_from: 6
+  style: blw
   time: "30 хв"
   products: [batat, oliia]
   ingredients:
@@ -63,6 +67,7 @@ recipes:
   title: "Омлет смужками"
   emoji: 🥚
   age_from: 6
+  style: blw
   time: "10 хв"
   products: [yaitse, moloko, maslo]
   ingredients:
@@ -81,6 +86,7 @@ recipes:
   title: "Вівсянка на грудному молоці"
   emoji: 🥣
   age_from: 6
+  style: spoon
   time: "12 хв"
   products: [vivsianka, banan, maslo]
   ingredients:
@@ -100,6 +106,7 @@ recipes:
   title: "Суп-пюре з червоної сочевиці"
   emoji: 🍲
   age_from: 6
+  style: spoon
   time: "30 хв"
   products: [sochevytsia, morkva, batat, oliia]
   ingredients:
@@ -119,6 +126,7 @@ recipes:
   title: "Тефтелі з індички в підливі"
   emoji: 🍖
   age_from: 9
+  style: blw
   time: "35 хв"
   products: [indychka, vivsianka, tsybulia, oliia]
   ingredients:
@@ -138,6 +146,7 @@ recipes:
   title: "Рибні котлетки з тріски"
   emoji: 🐠
   age_from: 9
+  style: blw
   time: "25 хв"
   products: [triska, kartoplia, yaitse, oliia]
   ingredients:
@@ -157,6 +166,7 @@ recipes:
   title: "Паштет з курячої печінки"
   emoji: 🫀
   age_from: 6
+  style: spoon
   time: "25 хв"
   products: [pechinka, morkva, maslo]
   ingredients:
@@ -175,6 +185,7 @@ recipes:
   title: "Хумус без солі"
   emoji: 🫘
   age_from: 9
+  style: both
   time: "15 хв (нут відварений)"
   products: [nut, tahini, oliia]
   ingredients:
@@ -193,6 +204,7 @@ recipes:
   title: "Вівсяні оладки без цукру"
   emoji: 🥞
   age_from: 9
+  style: blw
   time: "20 хв"
   products: [vivsianka, banan, yaitse, maslo]
   ingredients:
@@ -212,6 +224,7 @@ recipes:
   title: "Сирники на вівсяному борошні"
   emoji: 🧀
   age_from: 9
+  style: blw
   time: "25 хв"
   products: [syr_kyslo, yaitse, vivsianka, maslo]
   ingredients:
@@ -231,6 +244,7 @@ recipes:
   title: "Паста з броколі і сиром"
   emoji: 🍝
   age_from: 9
+  style: both
   time: "20 хв"
   products: [makarony, brokoli, syr_tverdyi, oliia]
   ingredients:
@@ -250,6 +264,7 @@ recipes:
   title: "Запечений лосось з овочами"
   emoji: 🐟
   age_from: 6
+  style: both
   time: "25 хв"
   products: [losos, kabachok, kartoplia, oliia]
   ingredients:
@@ -269,6 +284,7 @@ recipes:
   title: "Печене яблуко з корицею"
   emoji: 🍎
   age_from: 6
+  style: both
   time: "25 хв"
   products: [yabluko, maslo]
   ingredients:
@@ -287,6 +303,7 @@ recipes:
   title: "Мамалига брусочками"
   emoji: 🌽
   age_from: 9
+  style: blw
   time: "25 хв"
   products: [kukurudziana, syr_tverdyi, maslo]
   ingredients:
@@ -306,6 +323,7 @@ recipes:
   title: "Овочеве рагу з квасолею"
   emoji: 🍲
   age_from: 12
+  style: both
   time: "35 хв"
   products: [kvasolia, kabachok, pomidor, tsybulia, oliia]
   ingredients:
@@ -326,6 +344,7 @@ recipes:
   title: "Смузі-миска з лохиною"
   emoji: 🫐
   age_from: 9
+  style: spoon
   time: "5 хв"
   products: [chornytsia, banan, yogurt, vivsianka]
   ingredients:
@@ -346,6 +365,7 @@ recipes:
   title: "Пюре з кабачка і курки"
   emoji: 🍗
   age_from: 6
+  style: spoon
   time: "30 хв"
   products: [kurka, kabachok, oliia]
   ingredients:
@@ -365,6 +385,7 @@ recipes:
   title: "Гарбузове пюре з рисом"
   emoji: 🎃
   age_from: 6
+  style: spoon
   time: "25 хв"
   products: [garbuz, rys, maslo]
   ingredients:
@@ -383,6 +404,7 @@ recipes:
   title: "Кролик з цвітною капустою"
   emoji: 🐰
   age_from: 6
+  style: spoon
   time: "45 хв"
   products: [krolyk, tsvitna, oliia]
   ingredients:
@@ -402,6 +424,7 @@ recipes:
   title: "Кукурудзяна каша з грушею"
   emoji: 🍐
   age_from: 6
+  style: spoon
   time: "20 хв"
   products: [kukurudziana, grusha, maslo]
   ingredients:
@@ -420,6 +443,7 @@ recipes:
   title: "Пюре з яловичини і картоплі"
   emoji: 🥩
   age_from: 6
+  style: spoon
   time: "60 хв"
   products: [yalovychyna, kartoplia, morkva, oliia]
   ingredients:
@@ -440,6 +464,7 @@ recipes:
   title: "Судак на парі з кабачком"
   emoji: 🐟
   age_from: 6
+  style: both
   time: "25 хв"
   products: [sudak, kabachok, oliia]
   ingredients:
@@ -458,6 +483,7 @@ recipes:
   title: "Пшоняна каша з гарбузом"
   emoji: 🥣
   age_from: 7
+  style: spoon
   time: "35 хв"
   products: [psheno, garbuz, maslo]
   ingredients:
@@ -476,6 +502,7 @@ recipes:
   title: "Йогурт з бананом і льоном"
   emoji: 🍌
   age_from: 6
+  style: spoon
   time: "3 хв"
   products: [yogurt, banan, lyon]
   ingredients:
@@ -493,6 +520,7 @@ recipes:
   title: "Броколі з тофу"
   emoji: 🥦
   age_from: 6
+  style: both
   time: "20 хв"
   products: [tofu, brokoli, oliia]
   ingredients:
@@ -513,6 +541,7 @@ recipes:
   title: "Курячі фрикадельки в підливі"
   emoji: 🍗
   age_from: 9
+  style: blw
   time: "40 хв"
   products: [kurka, pomidor, rys, oliia]
   ingredients:
@@ -533,6 +562,7 @@ recipes:
   title: "Гарбузові оладки"
   emoji: 🎃
   age_from: 9
+  style: blw
   time: "25 хв"
   products: [garbuz, yaitse, vivsianka, oliia]
   ingredients:
@@ -552,6 +582,7 @@ recipes:
   title: "Рагу з кролика з овочами"
   emoji: 🐰
   age_from: 9
+  style: both
   time: "55 хв"
   products: [krolyk, kabachok, morkva, kartoplia]
   ingredients:
@@ -572,6 +603,7 @@ recipes:
   title: "Запіканка з сиру і груші"
   emoji: 🍮
   age_from: 9
+  style: both
   time: "45 хв"
   products: [syr_kyslo, grusha, yaitse, manna]
   ingredients:
@@ -592,6 +624,7 @@ recipes:
   title: "Скумбрія запечена з картоплею"
   emoji: 🐟
   age_from: 9
+  style: both
   time: "40 хв"
   products: [skumbriia, kartoplia, oliia]
   ingredients:
@@ -611,6 +644,7 @@ recipes:
   title: "Кіноа з нутом і овочами"
   emoji: 🥣
   age_from: 9
+  style: both
   time: "30 хв"
   products: [kinoa, nut, morkva, oliia]
   ingredients:
@@ -631,6 +665,7 @@ recipes:
   title: "Салат з буряка і яблука"
   emoji: 🥗
   age_from: 9
+  style: both
   time: "50 хв"
   products: [buriak, yabluko, oliia]
   ingredients:
@@ -649,6 +684,7 @@ recipes:
   title: "Оладки на кефірі"
   emoji: 🥞
   age_from: 9
+  style: blw
   time: "25 хв"
   products: [kefir, vivsianka, yaitse, oliia]
   ingredients:
@@ -668,6 +704,7 @@ recipes:
   title: "Суп з фрикадельками і локшиною"
   emoji: 🍲
   age_from: 9
+  style: spoon
   time: "45 хв"
   products: [yalovychyna, makarony, morkva, kartoplia]
   ingredients:
@@ -690,6 +727,7 @@ recipes:
   title: "Плов з куркою для малюка"
   emoji: 🍚
   age_from: 12
+  style: both
   time: "50 хв"
   products: [kurka, rys, morkva, oliia]
   ingredients:
@@ -710,6 +748,7 @@ recipes:
   title: "Ліниві вареники"
   emoji: 🥟
   age_from: 12
+  style: blw
   time: "25 хв"
   products: [syr_kyslo, yaitse, manna, maslo]
   ingredients:
@@ -729,6 +768,7 @@ recipes:
   title: "Тушкована капуста з мʼясом"
   emoji: 🥬
   age_from: 12
+  style: both
   time: "50 хв"
   products: [kapusta, yalovychyna, morkva, oliia]
   ingredients:
@@ -748,6 +788,7 @@ recipes:
   title: "Паста з мʼясною підливою"
   emoji: 🍝
   age_from: 12
+  style: both
   time: "40 хв"
   products: [makarony, yalovychyna, pomidor, oliia]
   ingredients:
@@ -768,6 +809,7 @@ recipes:
   title: "Овочеві котлетки з горохом"
   emoji: 🫛
   age_from: 12
+  style: blw
   time: "35 хв"
   products: [horokh, kartoplia, morkva, oliia]
   ingredients:

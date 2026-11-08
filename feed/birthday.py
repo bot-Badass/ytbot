@@ -209,6 +209,9 @@ async def run(context) -> None:
         log.info("вітання з місяцем: %s карток", sent)
 
 
+ENABLED = False   # 08.11: чекає погодження зразків Max; True + рестарт = запуск
+
+
 def install(app) -> None:
-    if app.job_queue is not None:
+    if ENABLED and app.job_queue is not None:
         app.job_queue.run_daily(run, time=AT, name="feed_birthday")

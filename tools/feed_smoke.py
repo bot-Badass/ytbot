@@ -115,12 +115,14 @@ class Bot:
         self.photos: list[tuple[int, str]] = []
         self.to: list[tuple[int, str]] = []   # кому пішло через send_message
         self.next_id = 1
+        self.last_kb = ""
 
     async def do_api_request(self, endpoint, api_kwargs=None, **kw):
         a = api_kwargs or {}
         where = f"{endpoint}"
         text = check_rich(where, a["rich_message"]["html"])
         check_kb(where, M.de_json(a["reply_markup"], None) if a.get("reply_markup") else None)
+        self.last_kb = a.get("reply_markup") or ""
         self.sent.append(text)
         self.next_id += 1
         return {"message_id": self.next_id}
@@ -940,6 +942,37 @@ async def main() -> None:
     late = [t for t in bot.sent[before:] if "6 місяців - можна" in t]
     assert len(late) == 2 and all("вже 6" in t for t in late) and not any("Запізна" in t for t in late), late
     print("«Готуємось»: головна 3/5/6 міс, розділ, план тижня; нагадування рівно одне, догін 2 доби")
+
+    # ── рецепти: подача на кожному, фільтр під подачу родини, «назад» до пошуку ──
+    assert all(r.get("style") in ("spoon", "blw", "both") for r in catalog.recipes()), "рецепт без style"
+    r_u, r_cx, alisa = kids["Старша"]
+    a_fid = alisa["family_id"]
+    old_style = db.get_kv(a_fid, "style")
+    await handlers.on_free_text(Update(bot, r_u, text="кролик"), r_cx)
+    assert "Рецептів" in bot.sent[-1], bot.sent[-1][:120]
+    rab = [r for r in catalog.recipes() if "krolyk" in r["products"] or "Кролик" in r["title"] or "кролик" in r["title"]]
+    assert rab, "немає рецептів з кроликом"
+    await press(f"f:r:{rab[0]['id']}:s", r_u, r_cx)
+    assert "f:rback" in str(bot.last_kb) and "Інгредієнти" in bot.sent[-1], "картка з пошуку без «До пошуку»"
+    await press("f:rback", r_u, r_cx)
+    assert "кролик" in bot.sent[-1].lower() and "Рецептів" in bot.sent[-1], bot.sent[-1][:120]
+    await press(f"f:r:{rab[0]['id']}:f", r_u, r_cx)
+    assert "f:rfridge" in str(bot.last_kb), "картка з холодильника веде не туди"
+    await press("f:r:nope:s", r_u, r_cx)                 # битий id - тиша, без падіння
+    db.set_kv(a_fid, "style", "spoon")
+    t_spoon = str(ui.recipes_screen(alisa)[1])
+    t_any = str(ui.recipes_screen(alisa, any_style=True)[1])
+    blw_only = [r for r in catalog.recipes() if r["style"] == "blw" and r["age_from"] <= 6]
+    assert blw_only and blw_only[0]["title"] not in t_spoon and blw_only[0]["title"] in t_any, "фільтр подачі"
+    for d in ("f:rec", "f:rec:any", "f:rec:all", "f:rec:all:any", "f:rec:fit"):
+        await press(d, r_u, r_cx)
+    db.run("DELETE FROM kv WHERE family_id=? AND key='style'", (a_fid,))
+    assert blw_only[0]["title"] in str(ui.recipes_screen(alisa)[1]), "без вибору подачі ховаємо рецепти"
+    if old_style:
+        db.set_kv(a_fid, "style", old_style)
+    for r in catalog.recipes():
+        check_rich(f"recipe {r['id']}", str(ui.recipe_card(alisa, r["id"])[0]))
+    print("рецепти: подача на всіх 41, фільтр лише для тих, хто вибрав, «До пошуку» повертає результати")
 
     # ── «Нам N місяців»: картка в день місяця, догін 1 доба, один раз, збіг із 6 міс ──
     from feed import birthday, cards as _cards

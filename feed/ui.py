@@ -722,15 +722,29 @@ def plate_card(child, pid: str, intro: dict) -> tuple[str, M]:
     return "\n".join(lines), M(rows)
 
 
-def _recipe_button(r: dict, months: int) -> B:
+STYLE_ICON = {"spoon": "🥄", "blw": "✋", "both": "🥄✋"}
+
+
+def _recipe_button(r: dict, months: int, origin: str = "") -> B:
+    """origin - куди веде «назад» з картки: s = пошук, f = холодильник, порожньо = список рецептів."""
     late = "⏳ " if r["age_from"] > months else ""
-    return B(f"{late}{r['emoji']} {r['title']} · {r['time']}", callback_data=f"f:r:{r['id']}")
+    icon = STYLE_ICON.get(r.get("style", "both"), "")
+    return B(f"{late}{r['emoji']} {r['title']} · {icon} · {r['time']}",
+             callback_data=f"f:r:{r['id']}" + (f":{origin}" if origin else ""))
 
 
-def recipes_screen(child, show_all: bool = False, stock: list[str] | None = None) -> tuple[str, M]:
+def family_style(child) -> str | None:
+    """Подача, яку родина вибрала сама (онбординг або налаштування). Не вибирали - None."""
+    return db.get_kv(child["family_id"], "style") or None
+
+
+def recipes_screen(child, show_all: bool = False, stock: list[str] | None = None,
+                   any_style: bool = False) -> tuple[str, M]:
     months = months_of(child)
-    every = catalog.recipes()
-    fit = catalog.recipes_for(months)
+    style = family_style(child)
+    every_style = catalog.recipes()
+    every = every_style if any_style else [r for r in every_style if catalog.recipe_fits_style(r, style)]
+    fit = [r for r in catalog.recipes_for(months) if r in every]
     later = [r for r in every if r["age_from"] > months]
     items = every if show_all else fit
     stock = stock or []
@@ -746,7 +760,14 @@ def recipes_screen(child, show_all: bool = False, stock: list[str] | None = None
         lines.append("Решта відкриється з віком: " + ", ".join(parts) + ".")
     lines += ["",
               "У кожному рецепті: інгредієнти з вагою, кроки, порада і як заморожувати. "
-              "Без солі і цукру до року."]
+              "Без солі і цукру до року.",
+              "Подача: 🥄 з ложки · ✋ шматочками · 🥄✋ і так, і так."]
+    hidden = len(every_style) - len(every)
+    if style and hidden:
+        how = "з ложки" if style == "spoon" else "шматочками"
+        lines.append(f"Показую під вашу подачу ({how}) і універсальні. Ще {hidden} - для іншої подачі.")
+    elif style and any_style:
+        lines.append("Показані всі способи подачі.")
 
     ready = [r for r in fit if not catalog.recipe_missing(r["id"], stock)[1]]
     if stock:
@@ -765,10 +786,15 @@ def recipes_screen(child, show_all: bool = False, stock: list[str] | None = None
         rows.append([B(f"🧊 Що зварити з наявного{f' · {len(ready)}' if ready else ''}",
                        callback_data="f:rfridge")])
     rows += [[_recipe_button(r, months)] for r in items]
+    tail = ":any" if any_style else ""
     if later:
-        rows.append([B("• За віком" if not show_all else "За віком", callback_data="f:rec"),
+        rows.append([B("• За віком" if not show_all else "За віком", callback_data=f"f:rec:fit{tail}"),
                      B("Усі рецепти" if not show_all else "• Усі рецепти",
-                       callback_data="f:rec:all")])
+                       callback_data=f"f:rec:all{tail}")])
+    if style:
+        age = ":all" if show_all else ":fit"
+        rows.append([B("• Під мою подачу" if not any_style else "Під мою подачу", callback_data=f"f:rec{age}"),
+                     B("Усі способи" if not any_style else "• Усі способи", callback_data=f"f:rec{age}:any")])
     rows.append([B("🏠 Головна", callback_data="f:home")])
     return "\n".join(lines), M(rows)
 
@@ -791,7 +817,7 @@ def search_result(child, query: str, codes: list[str], recipes: list[dict],
         fit = [r for r in recipes if r["age_from"] <= months]
         tail = "" if len(fit) == len(recipes) else f", підходять за віком {len(fit)}"
         lines.append(f"👨‍🍳 Рецептів: <b>{len(recipes)}</b>{tail}")
-        rows += [[_recipe_button(r, months)] for r in recipes]
+        rows += [[_recipe_button(r, months, "s")] for r in recipes]
 
     if codes:
         lines += ["", "🥕 Продукти в запиті: " + ", ".join(catalog.label(c) for c in codes)]
@@ -823,12 +849,12 @@ def recipes_found(child, codes: list[str], found: list[dict],
     if found:
         fit = [r for r in found if r["age_from"] <= months]
         lines.append(f"Знайшов {len(found)}, підходять за віком {len(fit)}.")
-        rows += [[_recipe_button(r, months)] for r in found]
+        rows += [[_recipe_button(r, months, "s")] for r in found]
     else:
         lines.append("Рецептів саме з цим поки немає.")
         if near:
             lines += ["", "Найближче з тієї ж полиці:"]
-            rows += [[_recipe_button(r, months)] for r in near]
+            rows += [[_recipe_button(r, months, "s")] for r in near]
         else:
             lines += ["", "Спробуй інший продукт або подивись «🎲 Ще варіанти» "
                       "в розділі тарілок: там страва збирається без рецепта."]
@@ -854,7 +880,7 @@ def recipes_from_fridge(child, stock: list[str]) -> tuple[str, M]:
     if ready:
         lines.append(f"<b>Усе є ({len(ready)}):</b>")
         lines += [f"· {r['emoji']} {esc(r['title'])} · {esc(r['time'])}" for r in ready]
-        rows += [[_recipe_button(r, months)] for r in ready]
+        rows += [[_recipe_button(r, months, "f")] for r in ready]
     else:
         lines.append("Повного набору на жоден рецепт удома немає. "
                      "Ось що майже готове:")
@@ -862,17 +888,19 @@ def recipes_from_fridge(child, stock: list[str]) -> tuple[str, M]:
         lines += ["", f"<b>Бракує однієї позиції ({len(almost)}):</b>"]
         for r, miss in almost[:8]:
             lines.append(f"· {r['emoji']} {esc(r['title'])} - купити {catalog.name(miss)}")
-        rows += [[_recipe_button(r, months)] for r, _ in almost[:8]]
+        rows += [[_recipe_button(r, months, "f")] for r, _ in almost[:8]]
     rows.append([B("🛒 Список покупок", callback_data="f:frbuy"),
                  B("‹ Рецепти", callback_data="f:rec")])
     rows.append([B("🏠 Головна", callback_data="f:home")])
     return "\n".join(lines), M(rows)
 
 
-def recipe_card(child, rid: str, stock: list[str] | None = None) -> tuple[str, M]:
+def recipe_card(child, rid: str, stock: list[str] | None = None,
+                back: tuple[str, str] = ("‹ Рецепти", "f:rec")) -> tuple[str, M]:
     r = catalog.recipe(rid)
     months = months_of(child)
-    parts = [f"<h3>{r['emoji']} {esc(r['title'])}</h3>", chips(f"з {r['age_from']} міс", f"⏱ {esc(r['time'])}")]
+    parts = [f"<h3>{r['emoji']} {esc(r['title'])}</h3>",
+             chips(f"з {r['age_from']} міс", catalog.RECIPE_STYLE[r.get("style", "both")], f"⏱ {esc(r['time'])}")]
     if r["age_from"] > months:
         parts.append(f"<blockquote>⏳ Для {esc(child['name'])} ще зарано: страва розрахована на "
                      f"{r['age_from']} місяців.</blockquote>")
@@ -888,7 +916,7 @@ def recipe_card(child, rid: str, stock: list[str] | None = None) -> tuple[str, M
     parts.append(f"<blockquote><b>💡 Порада.</b> {esc(r['tips'])}</blockquote>")
     parts.append(f"<h4>❄️ Заморозка</h4><blockquote expandable>{esc(r['freeze'])}</blockquote>")
     rows = [[B("🍽 Подали цю страву", callback_data=f"f:ru:{rid}", style="success")],
-            [B("‹ Рецепти", callback_data="f:rec"), B("🏠 Головна", callback_data="f:home")]]
+            [B(back[0], callback_data=back[1]), B("🏠 Головна", callback_data="f:home")]]
     return Rich("".join(parts)), M(rows)
 
 
@@ -1203,7 +1231,7 @@ def settings(child, family_id: int, remind: bool, show_rare: bool = False,
              f"Доступ мають: " + ", ".join(esc(m["name"]) for m in members),
              f"Нагадування: {'увімкнені' if remind else 'вимкнені'}",
              f"Вітамін D: {vitd_summary(db.vitd_conf(family_id))}",
-             f"Подача: {'з ложки (пюре, каші)' if spoon(child) else 'шматочками (BLW)'}",
+             f"Подача: {'з ложки (пюре, каші)' if spoon(child) else 'шматочками (BLW)'} - під неї поради і рецепти",
              f"Рідкісні продукти: {'показані' if show_rare else 'сховані'}",
              "",
              "<i>Бібліотека продуктів - довідка на основі рекомендацій ВООЗ, AAP і EFSA. "
@@ -1721,7 +1749,8 @@ def _guide_text(key: str) -> str:
             "ступінь розварювання.\n\n"
             "<b>🥄 З ложки чи шматочками.</b> Подача буває двох видів: пюре і каші з ложки "
             "або шматочки, які дитина бере сама (BLW). Обирається при старті, змінюється в "
-            "Налаштуваннях → «🥄 Подача».\n\n"
+            "Налаштуваннях → «🥄 Подача». Рецепти теж показуються під вашу подачу, решта - "
+            "кнопкою «Усі способи». Біля кожного рецепта видно: 🥄 з ложки, ✋ шматочками, 🥄✋ і так, і так.\n\n"
             "<b>Полиці білка.</b> Мʼясо, риба, яйця і бобові лежать окремо, щоб не шукати "
             "індичку серед сорока позицій. Для балансу тарілки це однаково один білок.\n\n"
             "<b>Позначки у списках:</b>\n"

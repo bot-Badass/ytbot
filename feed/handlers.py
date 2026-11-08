@@ -383,13 +383,9 @@ async def on_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             await update.message.reply_text(
                 "Нічого не знайшов. Напиши простіше, наприклад: курка, гарбуз або сирники.")
             raise ApplicationHandlerStop
-        if res["codes"] and not res["recipes"]:
-            near = catalog.recipes_with(_same_shelf(res["codes"]))
-            t_, kb = ui.recipes_found(child, res["codes"], [], near)
-        else:
-            context.user_data["found"] = res["codes"]
-            t_, kb = ui.search_result(child, text, res["codes"], res["recipes"],
-                                      db.intro_map(child["id"]))
+        context.user_data["found"] = res["codes"]
+        context.user_data["rq"] = {"q": text[:200], "rfind": 1}   # «‹ До пошуку» з картки рецепта
+        t_, kb = _search_screen(child, text, res, True)
         await _send(update, t_, kb)
         raise ApplicationHandlerStop
 
@@ -451,6 +447,14 @@ def _same_shelf(codes: list[str]) -> list[str]:
     keys = {catalog.key_of(c) for c in codes}
     return [p["code"] for p in catalog.products().values()
             if catalog.key_of(p["code"]) in keys and p["code"] not in codes]
+
+
+def _search_screen(child, text: str, res: dict, rfind: bool):
+    """Екран результатів пошуку. rfind - шукали з розділу рецептів: тоді лише продукти без
+    рецептів показують найближчі рецепти з тієї ж полиці."""
+    if rfind and res["codes"] and not res["recipes"]:
+        return ui.recipes_found(child, res["codes"], [], catalog.recipes_with(_same_shelf(res["codes"])))
+    return ui.search_result(child, text, res["codes"], res["recipes"], db.intro_map(child["id"]))
 
 
 def _tonight_ts() -> int:
@@ -944,8 +948,15 @@ async def _on_button(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
         return await _show(update, *ui.have(child, found, plates, intro))
 
     if action == "rec":
-        show_all = len(parts) > 2 and parts[2] == "all"
-        return await _show(update, *ui.recipes_screen(child, show_all, db.pantry_codes(fid)))
+        return await _show(update, *ui.recipes_screen(child, "all" in parts[2:], db.pantry_codes(fid),
+                                                      any_style="any" in parts[2:]))
+
+    if action == "rback":   # з рецепта назад до результатів пошуку, без повторного набору
+        rq = context.user_data.get("rq")
+        res = search.find(rq["q"]) if rq else None
+        if not res or not (res["codes"] or res["recipes"]):
+            return await _show(update, *ui.recipes_screen(child, False, db.pantry_codes(fid)))
+        return await _show(update, *_search_screen(child, rq["q"], res, bool(rq.get("rfind"))))
 
     if action == "rfind":
         context.user_data["await"] = {"k": "rfind"}
@@ -955,7 +966,11 @@ async def _on_button(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
         return await _show(update, *ui.recipes_from_fridge(child, db.pantry_codes(fid)))
 
     if action == "r":
-        return await _show(update, *ui.recipe_card(child, parts[2], db.pantry_codes(fid)))
+        if not catalog.recipe(parts[2] if len(parts) > 2 else ""):
+            return
+        origin = parts[3] if len(parts) > 3 else ""
+        back = {"s": ("‹ До пошуку", "f:rback"), "f": ("‹ Що зварити", "f:rfridge")}.get(origin, ("‹ Рецепти", "f:rec"))
+        return await _show(update, *ui.recipe_card(child, parts[2], db.pantry_codes(fid), back))
 
     if action == "ru":
         recipe = catalog.recipe(parts[2])
@@ -1161,7 +1176,8 @@ async def on_free_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     track_search(update, query, len(res["codes"]) + len(res["recipes"]))
     if res["codes"] or res["recipes"]:
         context.user_data["found"] = res["codes"]
-        text, kb = ui.search_result(child, query, res["codes"], res["recipes"], intro)
+        context.user_data["rq"] = {"q": query[:200], "rfind": 0}   # «‹ До пошуку» з картки рецепта
+        text, kb = _search_screen(child, query, res, False)
         await _send(update, text, kb)
         return
     tip = search.hint(query)
