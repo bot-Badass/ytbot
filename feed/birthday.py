@@ -209,7 +209,7 @@ async def run(context) -> None:
         log.info("вітання з місяцем: %s карток", sent)
 
 
-ENABLED = False   # 08.11: чекає погодження зразків Max; True + рестарт = запуск
+ENABLED = True    # 08.11 погоджено Max; False + рестарт = вимкнути
 
 
 def install(app) -> None:
