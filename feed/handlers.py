@@ -15,6 +15,8 @@ from telegram.ext import ApplicationHandlerStop, ContextTypes
 
 from . import achievements, cards, catalog, db, feedback, growth, reminders, rich, search, suggest, ui
 
+GSKIP = B("⏭ Пропустити", callback_data="f:gskip")
+
 log = logging.getLogger("feed")
 MAX_PLATE = 12                        # 6 не вистачало: каша+фрукти+олія+… легко дають 7-8
 
@@ -320,7 +322,7 @@ async def on_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             await update.message.reply_text("Треба число. Наприклад: 8.4")
             raise ApplicationHandlerStop
         value = float(m.group(1))
-        context.user_data.pop("await", None)
+        chain = context.user_data.pop("await", None).get("chain")
         if kind == "weight":
             if not 1 <= value <= 40:
                 await update.message.reply_text("Вага поза розумними межами. Спробуй ще раз.")
@@ -331,6 +333,15 @@ async def on_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
                 await update.message.reply_text("Зріст поза розумними межами. Спробуй ще раз.")
                 raise ApplicationHandlerStop
             db.add_measure(child["id"], user.id, height_cm=value)
+        field = "weight_kg" if kind == "weight" else "height_cm"
+        delta = ui.growth_delta(child, field)
+        saved = f"✅ Записав: {value:g} {'кг' if kind == 'weight' else 'см'}" + (f" ({delta})" if delta else "")
+        if chain and kind == "weight":
+            context.user_data["await"] = {"k": "height", "chain": 1}
+            await update.message.reply_text(saved)
+            await _send(update, "Тепер зріст у сантиметрах. Наприклад: 68.5", M([[GSKIP]]))
+            raise ApplicationHandlerStop
+        await update.message.reply_text(saved)   # запис окремо від навігації
         t, kb = ui.growth_screen(child)
         await _send(update, t, kb)
         raise ApplicationHandlerStop
@@ -979,6 +990,18 @@ async def _on_button(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
         return await _show(update, *ui.stats(child, intro))
 
     if action == "grow":
+        return await _show(update, *ui.growth_screen(child))
+
+    if action == "bdm":   # з картки «N місяців»: вага, потім зріст, кожне можна пропустити
+        context.user_data["await"] = {"k": "weight", "chain": 1}
+        return await _show(update, "Вага в кілограмах. Наприклад: 8.4", M([[GSKIP]]))
+
+    if action == "gskip":
+        step = (context.user_data.get("await") or {}).get("k")
+        if step == "weight":
+            context.user_data["await"] = {"k": "height", "chain": 1}
+            return await _show(update, "Тоді зріст у сантиметрах. Наприклад: 68.5", M([[GSKIP]]))
+        context.user_data.pop("await", None)
         return await _show(update, *ui.growth_screen(child))
 
     if action == "gw":

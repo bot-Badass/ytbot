@@ -941,6 +941,72 @@ async def main() -> None:
     assert len(late) == 2 and all("вже 6" in t for t in late) and not any("Запізна" in t for t in late), late
     print("«Готуємось»: головна 3/5/6 міс, розділ, план тижня; нагадування рівно одне, догін 2 доби")
 
+    # ── «Нам N місяців»: картка в день місяця, догін 1 доба, один раз, збіг із 6 міс ──
+    from feed import birthday, cards as _cards
+    _real = _cards.render
+
+    async def _fake(page, height=1350):
+        assert "MalenkyiVsesvitBot" in page and "</section>" in page
+        return b"png"
+    _cards.render = _fake
+    bd = {}
+    for uid, nm, n, shift in ((501, "Дев'ятка", 9, 0), (502, "Учорашня", 4, 1), (503, "Запізна2", 4, 2),
+                              (504, "Шостий", 6, 0), (505, "Річна", 12, 0), (506, "Велика", 25, 0)):
+        birth = today - timedelta(days=1)
+        while growth.month_date(birth, n) + timedelta(days=shift) != today:
+            birth -= timedelta(days=1)
+        fid = db.create_family(uid, nm)
+        db.add_child(fid, nm, birth.isoformat(), "girls")
+        bd[nm] = (User(uid, nm), Context(bot), db.child_of(uid))
+    assert birthday.due(bd["Дев'ятка"][2], today) == (9, False)
+    assert birthday.due(bd["Учорашня"][2], today) == (4, True)
+    assert birthday.due(bd["Запізна2"][2], today) is None and birthday.due(bd["Велика"][2], today) is None
+    assert birthday.years_text(12) == "1 рік" and birthday.years_text(18) == "1 рік 6 місяців"
+    ch9 = bd["Дев'ятка"][2]
+    db.mark_tried(ch9["id"], ["brokoli", "kabachok"])
+    db.add_measure(ch9["id"], 501, weight_kg=8.1)
+    db.run("UPDATE measure SET ts=ts-40*86400 WHERE child_id=?", (ch9["id"],))
+    for nm in bd:
+        ch = bd[nm][2]
+        n = birthday.due(ch, today)
+        if n:
+            html_c = birthday.card(ch, n[0])
+            assert "—" not in html_c, f"{nm}: довге тире"
+            check_text(f"bday caption {nm}", birthday.caption(ch, *n), limit=1024)
+            check_kb(f"bday kb {nm}", birthday.keyboard(ch, n[0], 1, True))
+    assert "З днем народження" in birthday.card(bd["Річна"][2], 12)
+    before = len(bot.photos)
+    await birthday.run(Context(bot))
+    got = [c for _, c in bot.photos[before:] if any(nm.replace("'", "&#x27;") in c or nm in c for nm in bd)]
+    n_all = len(bot.photos) - before
+    assert len(got) == 4, f"вітань {len(got)}: {[g[:40] for g in got]}"
+    assert any("вчора виповнилось 4 місяці" in g for g in got), got
+    assert any("сьогодні 1 рік" in g for g in got), got
+    await birthday.run(Context(bot))
+    assert len(bot.photos) == before + n_all, "вітання повторилось"
+    # день 6 міс: картка вже з планом тижня, six_months мовчить
+    n_six = len([t for t in bot.sent if "Шостий" in t])
+    await reminders.six_months(Context(bot))
+    assert len([t for t in bot.sent if "Шостий" in t]) == n_six, "6 міс: друге повідомлення в той самий день"
+    # з картки: вага → зріст, з приростом; «Пропустити» на кожному кроці
+    usr, cx, _ = bd["Дев'ятка"]
+    await press("f:bdm", usr, cx)
+    assert "Вага" in bot.sent[-1]
+    await say("8,6", usr, cx)
+    assert any("+500 г за 40 днів" in t for t in bot.sent[-3:]), bot.sent[-3:]
+    assert "зріст" in bot.sent[-1].lower()
+    await say("71", usr, cx)
+    assert "Зростання" in bot.sent[-1], bot.sent[-1][:80]
+    await press("f:bdm", usr, cx)
+    await press("f:gskip", usr, cx)
+    assert "зріст" in bot.sent[-1].lower()
+    await press("f:gskip", usr, cx)
+    assert "Зростання" in bot.sent[-1]
+    await say("8.7", usr, cx)          # після пропуску текст - уже не замір
+    assert db.q1("SELECT COUNT(*) c FROM measure WHERE child_id=?", (ch9["id"],))["c"] == 3
+    _cards.render = _real
+    print("вітання з місяцем: день/догін/межі, один раз, 6 міс без дубля, вага→зріст з приростом")
+
     print(f"\nнайбільша клавіатура: {widest[1]} кнопок, {widest[2]} байт - {widest[0]}")
     print(f"екранів перевірено: {screens}, повідомлень надіслано: {len(bot.sent)}")
     if errors:

@@ -1121,6 +1121,26 @@ def activity(child, user_id: int, days: int, others: dict[int, int]) -> tuple[st
 # ─────────────────────────── зростання ───────────────────────────
 
 
+def growth_delta(child, field: str) -> str:
+    """Що змінилось від попереднього заміру: «+420 г за 31 дн. · перцентиль 45 → 52»."""
+    rows = db.q(f"SELECT ts, {field} v FROM measure WHERE child_id=? AND {field} IS NOT NULL "
+                "ORDER BY ts DESC LIMIT 2", (child["id"],))
+    if len(rows) < 2:
+        return ""
+    new, old = rows
+    days = (local(new["ts"]).date() - local(old["ts"]).date()).days
+    if days < 1:
+        return ""
+    kind = "wfa" if field == "weight_kg" else "lhfa"
+    diff = new["v"] - old["v"]
+    amount = f"{diff * 1000:+.0f} г" if field == "weight_kg" else f"{diff:+.1f} см"
+    birth = birth_date(child)
+    p = [growth.zscore(child["sex"], kind, growth.age_days(birth, local(r["ts"]).date()), r["v"]) for r in (old, new)]
+    pct = (f" · перцентиль {growth.percentile(p[0]):.0f} → {growth.percentile(p[1]):.0f}"
+           if None not in p else "")
+    return f"{amount} за {plural(days, 'день', 'дні', 'днів')}{pct}"
+
+
 def growth_screen(child) -> tuple[str, M]:
     sex = child["sex"]
     parts = [f"<h3>📈 Зростання · {esc(child['name'])}</h3>", chips(growth.age_text(birth_date(child)))]
