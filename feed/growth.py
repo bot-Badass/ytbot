@@ -1,6 +1,7 @@
 """Перцентилі росту за стандартами ВООЗ (LMS, подобово, 0-5 років)."""
 from __future__ import annotations
 
+import calendar
 import functools
 import json
 import math
@@ -21,21 +22,28 @@ def age_days(birth: date, when: date | None = None) -> int:
     return ((when or datetime.now(KYIV).date()) - birth).days
 
 
-def age_months(birth: date, when: date | None = None) -> int:
-    return int(age_days(birth, when) // 30.4375)
-
-
 def month_date(birth: date, months: int) -> date:
-    """Перша доба, з якої age_months() уже дорівнює months (та сама мірка 30.4375)."""
-    return birth + timedelta(days=math.ceil(months * 30.4375))
+    """Календарний «місяць життя»: те саме число, що й день народження (31.01 → 28/29.02).
+    12.11.2026: була мірка 30.4375 дн. - картки «N місяців» ішли на 1-2 дні не тим числом."""
+    y, m = divmod(birth.month - 1 + months, 12)
+    y, m = birth.year + y, m + 1
+    return date(y, m, min(birth.day, calendar.monthrange(y, m)[1]))
+
+
+def age_months(birth: date, when: date | None = None) -> int:
+    when = when or datetime.now(KYIV).date()
+    n = (when.year - birth.year) * 12 + when.month - birth.month
+    while n > 0 and month_date(birth, n) > when:
+        n -= 1
+    return max(n, 0) if when >= birth else -1
 
 
 def age_text(birth: date, when: date | None = None) -> str:
     days = age_days(birth, when)
     if days < 0:
         return "ще не народилась"
-    months = int(days // 30.4375)
-    rest = int(days - months * 30.4375)
+    months = age_months(birth, when)
+    rest = ((when or datetime.now(KYIV).date()) - month_date(birth, months)).days
     if months == 0:
         return f"{days} дн."
     return f"{months} міс {rest} дн." if rest else f"{months} міс"

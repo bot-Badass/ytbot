@@ -9,6 +9,7 @@
 from __future__ import annotations
 
 import asyncio
+import calendar
 import html.parser
 import json
 import os
@@ -883,18 +884,27 @@ async def main() -> None:
     print("зворотний звʼязок: кнопка → автор → reply → людина; пошук-питання; 3-й день один раз")
 
     # ── режим «Готуємось»: діти до 6 міс ──
-    from datetime import datetime, timedelta
+    from datetime import date, datetime, timedelta
     today = datetime.now(ui.TZ).date()
     kids = {}
-    for uid, nm, age_d in ((401, "Тримісячна", 91), (402, "Пʼятимісячна", 152),
-                           (403, "Завтрашня", 182), (404, "Шестимісячна", 183),
-                           (405, "Старша", 300)):
+    def back(months):   # дата народження, від якої сьогодні рівно N календарних місяців
+        y, m = divmod(today.year * 12 + today.month - 1 - months, 12)
+        return date(y, m + 1, min(today.day, calendar.monthrange(y, m + 1)[1]))
+    six_b = back(6)
+    if growth.month_date(six_b, 6) != today:   # 29-31 число: «рівно» не існує, беремо день, що дає 6 сьогодні
+        six_b = next(six_b - timedelta(days=k) for k in range(4) if growth.month_date(six_b - timedelta(days=k), 6) == today)
+    for uid, nm, birth in ((401, "Тримісячна", back(3)), (402, "Пʼятимісячна", back(5)),
+                           (403, "Завтрашня", six_b + timedelta(days=1)), (404, "Шестимісячна", six_b),
+                           (405, "Старша", back(10))):
         usr = User(uid, nm)
         fid = db.create_family(uid, nm)
-        db.add_child(fid, nm, (today - timedelta(days=age_d)).isoformat(), "girls")
+        db.add_child(fid, nm, birth.isoformat(), "girls")
         kids[nm] = (usr, Context(bot), db.child_of(uid))
-    assert growth.age_months(today - timedelta(days=183)) == 6 and \
-        growth.age_months(today - timedelta(days=182)) == 5, "month_date розходиться з age_months"
+    assert growth.age_months(six_b) == 6 and growth.age_months(six_b + timedelta(days=1)) == 5 and \
+        growth.month_date(six_b, 6) == today, "month_date розходиться з age_months"
+    b = date(2026, 2, 10)   # 12.11.2026: картка «9 місяців» Ясі прийшла 11.11 замість 10.11
+    assert growth.month_date(b, 9) == date(2026, 11, 10) and growth.age_months(b, date(2026, 11, 9)) == 8
+    assert growth.month_date(date(2026, 1, 31), 1) == date(2026, 2, 28)
     for nm, expect in (("Тримісячна", True), ("Пʼятимісячна", True), ("Завтрашня", True),
                        ("Шестимісячна", False), ("Старша", False)):
         usr, cx, ch = kids[nm]
@@ -935,8 +945,10 @@ async def main() -> None:
     await press("f:next", usr, cx)
     assert "Готуємось до прикорму" not in bot.sent[-1] and "введено все" not in bot.sent[-1], bot.sent[-1][:120]
     # догін: бот лежав об 11:00 у сам день - прийде за 1-2 доби, «вже 6 місяців»; на 3-тю ні
-    for uid, nm, age_d in ((406, "Вчорашня", 184), (407, "Позавчорашня", 185), (408, "Запізна", 186)):
-        db.add_child(db.create_family(uid, nm), nm, (today - timedelta(days=age_d)).isoformat(), "girls")
+    for uid, nm, lag in ((406, "Вчорашня", 1), (407, "Позавчорашня", 2), (408, "Запізна", 3)):
+        b = next(back(6) - timedelta(days=k) for k in range(40)
+                 if growth.month_date(back(6) - timedelta(days=k), 6) == today - timedelta(days=lag))
+        db.add_child(db.create_family(uid, nm), nm, b.isoformat(), "girls")
     before = len(bot.sent)
     await reminders.six_months(Context(bot))
     late = [t for t in bot.sent[before:] if "6 місяців - можна" in t]
